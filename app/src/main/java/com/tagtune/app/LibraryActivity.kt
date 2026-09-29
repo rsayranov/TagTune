@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
+import android.view.Window
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -20,6 +21,10 @@ class LibraryActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.setStatusBarColor(Color.WHITE)
+        window.decorView.systemUiVisibility =
+            android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
 
         database = MusicDatabase(this)
 
@@ -38,7 +43,7 @@ class LibraryActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 40, 24, 16)
+            setPadding(24, 16, 24, 16)
             setBackgroundColor(Color.WHITE)
         }
 
@@ -47,7 +52,7 @@ class LibraryActivity : Activity() {
             textSize = 28f
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 8, 0, 20)
         }
 
         categoryContainer = LinearLayout(this).apply {
@@ -123,7 +128,10 @@ class LibraryActivity : Activity() {
 
                 if (category == selectedCategory) {
                     setTextColor(Color.BLACK)
-                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setTypeface(
+                        null,
+                        android.graphics.Typeface.BOLD
+                    )
                 } else {
                     setTextColor(Color.GRAY)
                 }
