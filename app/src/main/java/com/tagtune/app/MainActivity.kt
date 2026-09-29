@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.graphics.Color
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -18,6 +17,8 @@ class MainActivity : Activity() {
     private lateinit var folderText: TextView
     private lateinit var countText: TextView
     private lateinit var tracksContainer: LinearLayout
+
+    private lateinit var database: MusicDatabase
 
     companion object {
         private const val PICK_FOLDER = 1001
@@ -34,6 +35,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        database = MusicDatabase(this)
+
         showMainScreen()
     }
 
@@ -100,7 +104,6 @@ class MainActivity : Activity() {
         }
 
         root.addView(title)
-
         root.addView(subtitle)
 
         root.addView(
@@ -216,9 +219,12 @@ class MainActivity : Activity() {
 
             scanFolder(folderUri, tracks)
 
+            saveTracksToDatabase(folderUri, tracks)
+
             runOnUiThread {
 
-                countText.text = "Найдено треков: ${tracks.size}"
+                countText.text =
+                    "Найдено треков: ${tracks.size}"
 
                 if (tracks.isEmpty()) {
 
@@ -249,15 +255,45 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun saveTracksToDatabase(
+        folderUri: Uri,
+        tracks: List<String>
+    ) {
+
+        val db = database.writableDatabase
+
+        for (fileName in tracks) {
+
+            val fileUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                folderUri,
+                DocumentsContract.getTreeDocumentId(folderUri)
+            )
+
+            val values = android.content.ContentValues().apply {
+                put("uri", "$fileUri/$fileName")
+                put("file_name", fileName)
+                put("date_added", System.currentTimeMillis())
+            }
+
+            db.insertWithOnConflict(
+                "tracks",
+                null,
+                values,
+                android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE
+            )
+        }
+    }
+
     private fun scanFolder(
         folderUri: Uri,
         tracks: MutableList<String>
     ) {
 
-        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-            folderUri,
-            DocumentsContract.getTreeDocumentId(folderUri)
-        )
+        val childrenUri =
+            DocumentsContract.buildChildDocumentsUriUsingTree(
+                folderUri,
+                DocumentsContract.getTreeDocumentId(folderUri)
+            )
 
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
