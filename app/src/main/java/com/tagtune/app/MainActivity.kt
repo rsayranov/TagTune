@@ -112,6 +112,12 @@ class MainActivity : Activity() {
         navigation.setTextColor(Color.DKGRAY)
         navigation.gravity = Gravity.CENTER
 
+        navigation.setOnClickListener {
+            startActivity(
+                Intent(this, LibraryActivity::class.java)
+            )
+        }
+
         root.addView(navigation)
 
         setContentView(root)
@@ -182,29 +188,42 @@ class MainActivity : Activity() {
 
                 countText.text = "Найдено треков: ${tracks.size}"
 
-                for (track in tracks) {
+                if (tracks.isEmpty()) {
 
-                    val title = track.title ?: track.fileName
-                    val artist = track.artist ?: "Неизвестный исполнитель"
-                    val format = track.format
-                        ?.uppercase(Locale.getDefault())
-                        ?: "UNKNOWN"
-
-                    val quality = track.quality
-
-                    val textView = TextView(this)
-
-                    textView.text = if (quality != null) {
-                        "$title\n$artist\n$format · $quality"
-                    } else {
-                        "$title\n$artist\n$format"
+                    val emptyText = TextView(this).apply {
+                        text = "Музыкальные файлы не найдены"
+                        textSize = 16f
+                        setPadding(0, 20, 0, 20)
                     }
 
-                    textView.textSize = 16f
-                    textView.setTextColor(Color.BLACK)
-                    textView.setPadding(8, 14, 8, 14)
+                    tracksContainer.addView(emptyText)
 
-                    tracksContainer.addView(textView)
+                } else {
+
+                    tracks.forEach { track ->
+
+                        val title = track.title ?: track.fileName
+                        val artist = track.artist ?: "Неизвестный исполнитель"
+                        val format = track.format
+                            ?.uppercase(Locale.getDefault())
+                            ?: "UNKNOWN"
+
+                        val quality = track.quality
+
+                        val trackText = TextView(this).apply {
+                            text = if (quality != null) {
+                                "$title\n$artist\n$format · $quality"
+                            } else {
+                                "$title\n$artist\n$format"
+                            }
+
+                            textSize = 16f
+                            setTextColor(Color.BLACK)
+                            setPadding(8, 14, 8, 14)
+                        }
+
+                        tracksContainer.addView(trackText)
+                    }
                 }
             }
 
