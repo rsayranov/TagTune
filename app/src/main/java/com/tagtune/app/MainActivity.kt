@@ -1,6 +1,8 @@
 package com.tagtune.app
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.graphics.Color
 import android.view.Gravity
@@ -10,8 +12,19 @@ import android.widget.TextView
 
 class MainActivity : Activity() {
 
+    private lateinit var folderText: TextView
+
+    companion object {
+        private const val PICK_FOLDER = 1001
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        showMainScreen()
+    }
+
+    private fun showMainScreen() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -27,7 +40,7 @@ class MainActivity : Activity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "Офлайн-плеер для твоей музыкальной библиотеки"
+            text = "Пожалуйста, выбери папку с музыкальными файлами"
             textSize = 16f
             setTextColor(Color.DKGRAY)
             gravity = Gravity.CENTER
@@ -35,24 +48,24 @@ class MainActivity : Activity() {
         }
 
         val foldersButton = Button(this).apply {
-            text = "Выбрать папки"
+            text = "Выбрать папку"
+
+            setOnClickListener {
+                openFolderPicker()
+            }
         }
 
-        root.addView(
-            title,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
+        folderText = TextView(this).apply {
+            text = "Папка не выбрана"
+            textSize = 15f
+            setTextColor(Color.DKGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 30, 0, 20)
+        }
 
-        root.addView(
-            subtitle,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
+        root.addView(title)
+
+        root.addView(subtitle)
 
         root.addView(
             foldersButton,
@@ -62,9 +75,15 @@ class MainActivity : Activity() {
             )
         )
 
-        val spacer = TextView(this).apply {
-            text = ""
-        }
+        root.addView(
+            folderText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val spacer = TextView(this)
 
         root.addView(
             spacer,
@@ -86,5 +105,45 @@ class MainActivity : Activity() {
         root.addView(navigation)
 
         setContentView(root)
+    }
+
+    private fun openFolderPicker() {
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        )
+
+        startActivityForResult(intent, PICK_FOLDER)
+    }
+
+    @Deprecated("Deprecated in Android API")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == PICK_FOLDER && resultCode == RESULT_OK) {
+
+            val uri: Uri? = data?.data
+
+            if (uri != null) {
+
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                }
+
+                folderText.text = "Выбрано:\n$uri"
+            }
+        }
     }
 }
