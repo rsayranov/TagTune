@@ -1,11 +1,11 @@
 package com.tagtune.app
 
 import android.app.Activity
-import android.database.sqlite.SQLiteDatabase
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 class LibraryActivity : Activity() {
@@ -53,13 +53,42 @@ class LibraryActivity : Activity() {
             setPadding(0, 0, 0, 20)
         }
 
+        val sortText = TextView(this).apply {
+            text = "Недавно добавленные ▼"
+            textSize = 14f
+            setTextColor(Color.DKGRAY)
+            setPadding(8, 0, 8, 16)
+        }
+
         tracksContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
 
+        val scrollView = ScrollView(this)
+        scrollView.addView(tracksContainer)
+
         root.addView(title)
         root.addView(categories)
-        root.addView(tracksContainer)
+        root.addView(sortText)
+
+        root.addView(
+            scrollView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        val navigation = TextView(this).apply {
+            text = "Медиатека        Теги        Поиск        Настройки"
+            textSize = 14f
+            setTextColor(Color.DKGRAY)
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 8)
+        }
+
+        root.addView(navigation)
 
         setContentView(root)
 
@@ -116,11 +145,6 @@ class LibraryActivity : Activity() {
                         it.getColumnIndexOrThrow("artist")
                     )
 
-                val album =
-                    it.getString(
-                        it.getColumnIndexOrThrow("album")
-                    )
-
                 val format =
                     it.getString(
                         it.getColumnIndexOrThrow("format")
@@ -131,46 +155,62 @@ class LibraryActivity : Activity() {
                         it.getColumnIndexOrThrow("quality")
                     )
 
-                val track = TextView(this).apply {
+                val trackRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(8, 14, 8, 14)
+                }
 
-                    val titleText =
-                        title ?: "Без названия"
+                val titleText = TextView(this).apply {
+                    text = title ?: "Без названия"
+                    textSize = 17f
+                    setTextColor(Color.BLACK)
+                }
 
-                    val artistText =
-                        artist ?: "Неизвестный исполнитель"
+                val artistText = TextView(this).apply {
+                    text = artist ?: "Неизвестный исполнитель"
+                    textSize = 15f
+                    setTextColor(Color.DKGRAY)
+                    setPadding(0, 4, 0, 0)
+                }
 
-                    val albumText =
-                        album ?: ""
+                val qualityText = TextView(this).apply {
 
-                    val formatText =
+                    val formatValue =
                         format
                             ?.uppercase()
                             ?: ""
 
-                    val qualityText =
+                    val qualityValue =
                         quality ?: ""
 
                     text =
-                        "$titleText\n" +
-                        "$artistText" +
-                        if (albumText.isNotEmpty()) {
-                            " · $albumText"
+                        if (qualityValue.isNotEmpty()) {
+                            "$formatValue · $qualityValue"
                         } else {
-                            ""
-                        } +
-                        "\n$formatText" +
-                        if (qualityText.isNotEmpty()) {
-                            " · $qualityText"
-                        } else {
-                            ""
+                            formatValue
                         }
 
-                    textSize = 16f
-                    setTextColor(Color.BLACK)
-                    setPadding(8, 16, 8, 16)
+                    textSize = 13f
+                    setTextColor(Color.GRAY)
+                    setPadding(0, 4, 0, 0)
                 }
 
-                tracksContainer.addView(track)
+                trackRow.addView(titleText)
+                trackRow.addView(artistText)
+                trackRow.addView(qualityText)
+
+                tracksContainer.addView(trackRow)
+
+                val divider = TextView(this).apply {
+                    text = ""
+                    setBackgroundColor(Color.LTGRAY)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        1
+                    )
+                }
+
+                tracksContainer.addView(divider)
 
             } while (it.moveToNext())
         }
