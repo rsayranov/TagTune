@@ -39,88 +39,64 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         database = MusicDatabase(this)
-
         showMainScreen()
     }
 
     private fun showMainScreen() {
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 50, 32, 16)
-            setBackgroundColor(Color.WHITE)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(32, 50, 32, 16)
+        root.setBackgroundColor(Color.WHITE)
+
+        val title = TextView(this)
+        title.text = "TagTune"
+        title.textSize = 30f
+        title.setTextColor(Color.BLACK)
+        title.gravity = Gravity.CENTER
+
+        val subtitle = TextView(this)
+        subtitle.text = "Музыкальная библиотека"
+        subtitle.textSize = 16f
+        subtitle.setTextColor(Color.DKGRAY)
+        subtitle.gravity = Gravity.CENTER
+
+        val chooseButton = Button(this)
+        chooseButton.text = "Выбрать папку"
+        chooseButton.setOnClickListener {
+            openFolderPicker()
         }
 
-        val title = TextView(this).apply {
-            text = "TagTune"
-            textSize = 30f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
+        val scanButton = Button(this)
+        scanButton.text = "Сканировать"
+        scanButton.setOnClickListener {
+            scanSelectedFolder()
         }
 
-        val subtitle = TextView(this).apply {
-            text = "Музыкальная библиотека"
-            textSize = 16f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 20)
-        }
+        folderText = TextView(this)
+        folderText.text = "Папка не выбрана"
+        folderText.textSize = 14f
+        folderText.setTextColor(Color.DKGRAY)
+        folderText.gravity = Gravity.CENTER
 
-        val chooseButton = Button(this).apply {
-            text = "Выбрать папку"
-            setOnClickListener {
-                openFolderPicker()
-            }
-        }
+        countText = TextView(this)
+        countText.text = "Найдено треков: 0"
+        countText.textSize = 18f
+        countText.setTextColor(Color.BLACK)
 
-        val scanButton = Button(this).apply {
-            text = "Сканировать"
-            setOnClickListener {
-                scanSelectedFolder()
-            }
-        }
+        tracksContainer = LinearLayout(this)
+        tracksContainer.orientation = LinearLayout.VERTICAL
 
-        folderText = TextView(this).apply {
-            text = "Папка не выбрана"
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 12)
-        }
-
-        countText = TextView(this).apply {
-            text = "Найдено треков: 0"
-            textSize = 18f
-            setTextColor(Color.BLACK)
-            setPadding(0, 12, 0, 12)
-        }
-
-        tracksContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        val scrollView = ScrollView(this).apply {
-            addView(tracksContainer)
-        }
+        val scrollView = ScrollView(this)
+        scrollView.addView(tracksContainer)
 
         root.addView(title)
         root.addView(subtitle)
-        root.addView(
-            chooseButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
-        root.addView(
-            scanButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
+        root.addView(chooseButton)
+        root.addView(scanButton)
         root.addView(folderText)
         root.addView(countText)
+
         root.addView(
             scrollView,
             LinearLayout.LayoutParams(
@@ -130,13 +106,11 @@ class MainActivity : Activity() {
             )
         )
 
-        val navigation = TextView(this).apply {
-            text = "Медиатека        Теги        Поиск        Настройки"
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 16)
-        }
+        val navigation = TextView(this)
+        navigation.text = "Медиатека        Теги        Поиск        Настройки"
+        navigation.textSize = 14f
+        navigation.setTextColor(Color.DKGRAY)
+        navigation.gravity = Gravity.CENTER
 
         root.addView(navigation)
 
@@ -163,45 +137,36 @@ class MainActivity : Activity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == PICK_FOLDER && resultCode == RESULT_OK) {
-
-            val uri = data?.data ?: return
-
-            try {
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: SecurityException) {
-            }
-
-            folderText.text = "Выбрано:\n$uri"
-            countText.text = "Нажми «Сканировать»"
-            tracksContainer.removeAllViews()
+        if (requestCode != PICK_FOLDER || resultCode != RESULT_OK) {
+            return
         }
+
+        val uri = data?.data ?: return
+
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+        }
+
+        folderText.text = "Выбрано:\n$uri"
+        countText.text = "Нажми «Сканировать»"
+        tracksContainer.removeAllViews()
     }
 
     private fun scanSelectedFolder() {
 
-        val uriText = folderText.text.toString()
+        val text = folderText.text.toString()
 
-        if (!uriText.startsWith("Выбрано:")) {
+        if (!text.startsWith("Выбрано:")) {
             countText.text = "Сначала выбери папку"
             return
         }
 
-        val uriString = uriText.substringAfter("\n").trim()
-
-        val folderUri = try {
-            Uri.parse(uriString)
-        } catch (_: Exception) {
-            null
-        }
-
-        if (folderUri == null) {
-            countText.text = "Не удалось открыть папку"
-            return
-        }
+        val uriString = text.substringAfter("\n").trim()
+        val folderUri = Uri.parse(uriString)
 
         countText.text = "Сканирование..."
         tracksContainer.removeAllViews()
@@ -217,52 +182,215 @@ class MainActivity : Activity() {
 
                 countText.text = "Найдено треков: ${tracks.size}"
 
-                if (tracks.isEmpty()) {
+                for (track in tracks) {
 
-                    val emptyText = TextView(this).apply {
-                        text = "Музыкальные файлы не найдены"
-                        textSize = 16f
-                        setPadding(0, 20, 0, 20)
+                    val title = track.title ?: track.fileName
+                    val artist = track.artist ?: "Неизвестный исполнитель"
+                    val format = track.format
+                        ?.uppercase(Locale.getDefault())
+                        ?: "UNKNOWN"
+
+                    val quality = track.quality
+
+                    val textView = TextView(this)
+
+                    textView.text = if (quality != null) {
+                        "$title\n$artist\n$format · $quality"
+                    } else {
+                        "$title\n$artist\n$format"
                     }
 
-                    tracksContainer.addView(emptyText)
+                    textView.textSize = 16f
+                    textView.setTextColor(Color.BLACK)
+                    textView.setPadding(8, 14, 8, 14)
 
-                } else {
-
-                    tracks.forEach { track ->
-
-                        val artist =
-                            track.artist ?: "Неизвестный исполнитель"
-
-                        val title =
-                            track.title ?: track.fileName
-
-                        val format =
-                            track.format
-                                ?.uppercase(Locale.getDefault())
-                                ?: "UNKNOWN"
-
-                        val quality =
-                            track.quality ?: ""
-
-                        val trackText = TextView(this).apply {
-                            text = if (quality.isNotEmpty()) {
-                                "$title\n$artist\n$format · $quality"
-                            } else {
-                                "$title\n$artist\n$format"
-                            }
-
-                            textSize = 16f
-                            setTextColor(Color.BLACK)
-                            setPadding(8, 14, 8, 14)
-                        }
-
-                        tracksContainer.addView(trackText)
-                    }
+                    tracksContainer.addView(textView)
                 }
             }
 
         }.start()
+    }
+
+    private fun scanFolder(
+        folderUri: Uri,
+        tracks: MutableList<TrackInfo>
+    ) {
+
+        val documentId =
+            DocumentsContract.getTreeDocumentId(folderUri)
+
+        val childrenUri =
+            DocumentsContract.buildChildDocumentsUriUsingTree(
+                folderUri,
+                documentId
+            )
+
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+
+        contentResolver.query(
+            childrenUri,
+            projection,
+            null,
+            null,
+            null
+        )?.use { cursor ->
+
+            val idIndex = cursor.getColumnIndex(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID
+            )
+
+            val nameIndex = cursor.getColumnIndex(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME
+            )
+
+            val mimeIndex = cursor.getColumnIndex(
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+            )
+
+            while (cursor.moveToNext()) {
+
+                val id = cursor.getString(idIndex)
+                val name = cursor.getString(nameIndex)
+                val mime = cursor.getString(mimeIndex)
+
+                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+
+                    val childUri =
+                        DocumentsContract.buildDocumentUriUsingTree(
+                            folderUri,
+                            id
+                        )
+
+                    scanFolder(childUri, tracks)
+
+                } else {
+
+                    val extension =
+                        name.substringAfterLast('.', "")
+                            .lowercase()
+
+                    if (extension in MUSIC_EXTENSIONS) {
+
+                        val fileUri =
+                            DocumentsContract.buildDocumentUriUsingTree(
+                                folderUri,
+                                id
+                            )
+
+                        val track =
+                            readMetadata(fileUri, name)
+
+                        tracks.add(track)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readMetadata(
+        uri: Uri,
+        fileName: String
+    ): TrackInfo {
+
+        val format =
+            fileName.substringAfterLast('.', "")
+                .lowercase()
+
+        val retriever = MediaMetadataRetriever()
+
+        return try {
+
+            retriever.setDataSource(this, uri)
+
+            val title = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_TITLE
+            )
+
+            val artist = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_ARTIST
+            )
+
+            val album = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_ALBUM
+            )
+
+            val genre = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_GENRE
+            )
+
+            val bitrate = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_BITRATE
+            )
+
+            val sampleRate = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_SAMPLERATE
+            )
+
+            val quality = buildQuality(
+                format,
+                bitrate,
+                sampleRate
+            )
+
+            TrackInfo(
+                uri = uri.toString(),
+                fileName = fileName,
+                title = title,
+                artist = artist,
+                album = album,
+                genre = genre,
+                format = format,
+                quality = quality
+            )
+
+        } catch (_: Exception) {
+
+            TrackInfo(
+                uri = uri.toString(),
+                fileName = fileName,
+                title = null,
+                artist = null,
+                album = null,
+                genre = null,
+                format = format,
+                quality = null
+            )
+
+        } finally {
+
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun buildQuality(
+        format: String,
+        bitrate: String?,
+        sampleRate: String?
+    ): String? {
+
+        val rate = sampleRate?.toLongOrNull()
+        val bit = bitrate?.toLongOrNull()
+
+        if (format == "flac" && rate != null) {
+            return "${rate / 1000} kHz"
+        }
+
+        if (bit != null) {
+            return "${bit / 1000} kbps"
+        }
+
+        if (rate != null) {
+            return "${rate / 1000} kHz"
+        }
+
+        return null
     }
 
     private fun saveTracksToDatabase(
@@ -273,7 +401,27 @@ class MainActivity : Activity() {
 
         for (track in tracks) {
 
-            val values = ContentValues().apply {
-                put("uri", track.uri)
-                put("file_name", track.fileName)
-               
+            val values = ContentValues()
+
+            values.put("uri", track.uri)
+            values.put("file_name", track.fileName)
+            values.put("title", track.title)
+            values.put("artist", track.artist)
+            values.put("album", track.album)
+            values.put("genre", track.genre)
+            values.put("format", track.format)
+            values.put("quality", track.quality)
+            values.put(
+                "date_added",
+                System.currentTimeMillis()
+            )
+
+            db.insertWithOnConflict(
+                "tracks",
+                null,
+                values,
+                android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE
+            )
+        }
+    }
+}
