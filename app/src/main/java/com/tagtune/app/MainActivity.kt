@@ -164,14 +164,16 @@ class MainActivity : Activity() {
 
     private fun scanSelectedFolder() {
 
-        val text = folderText.text.toString()
+        val selectedFolderText = folderText.text.toString()
 
-        if (!text.startsWith("Выбрано:")) {
+        if (!selectedFolderText.startsWith("Выбрано:")) {
             countText.text = "Сначала выбери папку"
             return
         }
 
-        val uriString = text.substringAfter("\n").trim()
+        val uriString =
+            selectedFolderText.substringAfter("\n").trim()
+
         val folderUri = Uri.parse(uriString)
 
         countText.text = "Сканирование..."
@@ -186,12 +188,13 @@ class MainActivity : Activity() {
 
             runOnUiThread {
 
-                countText.text = "Найдено треков: ${tracks.size}"
+                countText.text =
+                    "Найдено треков: ${tracks.size}"
 
                 if (tracks.isEmpty()) {
 
                     val emptyText = TextView(this).apply {
-                        text = "Музыкальные файлы не найдены"
+                        this.text = "Музыкальные файлы не найдены"
                         textSize = 16f
                         setPadding(0, 20, 0, 20)
                     }
@@ -202,25 +205,40 @@ class MainActivity : Activity() {
 
                     tracks.forEach { track ->
 
-                        val title = track.title ?: track.fileName
-                        val artist = track.artist ?: "Неизвестный исполнитель"
-                        val format = track.format
-                            ?.uppercase(Locale.getDefault())
-                            ?: "UNKNOWN"
+                        val titleText =
+                            track.title ?: track.fileName
 
-                        val quality = track.quality
+                        val artistText =
+                            track.artist
+                                ?: "Неизвестный исполнитель"
 
-                        val trackText = TextView(this).apply {
-                            text = if (quality != null) {
-                                "$title\n$artist\n$format · $quality"
-                            } else {
-                                "$title\n$artist\n$format"
+                        val formatText =
+                            track.format
+                                ?.uppercase(Locale.getDefault())
+                                ?: "UNKNOWN"
+
+                        val qualityText =
+                            track.quality
+
+                        val trackText =
+                            TextView(this).apply {
+
+                                this.text =
+                                    if (qualityText != null) {
+                                        "$titleText\n" +
+                                            "$artistText\n" +
+                                            "$formatText · " +
+                                            qualityText
+                                    } else {
+                                        "$titleText\n" +
+                                            "$artistText\n" +
+                                            formatText
+                                    }
+
+                                textSize = 16f
+                                setTextColor(Color.BLACK)
+                                setPadding(8, 14, 8, 14)
                             }
-
-                            textSize = 16f
-                            setTextColor(Color.BLACK)
-                            setPadding(8, 14, 8, 14)
-                        }
 
                         tracksContainer.addView(trackText)
                     }
@@ -258,17 +276,20 @@ class MainActivity : Activity() {
             null
         )?.use { cursor ->
 
-            val idIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID
-            )
+            val idIndex =
+                cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                )
 
-            val nameIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME
-            )
+            val nameIndex =
+                cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                )
 
-            val mimeIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_MIME_TYPE
-            )
+            val mimeIndex =
+                cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+                )
 
             while (cursor.moveToNext()) {
 
@@ -276,32 +297,42 @@ class MainActivity : Activity() {
                 val name = cursor.getString(nameIndex)
                 val mime = cursor.getString(mimeIndex)
 
-                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                if (
+                    mime ==
+                    DocumentsContract.Document.MIME_TYPE_DIR
+                ) {
 
                     val childUri =
-                        DocumentsContract.buildDocumentUriUsingTree(
-                            folderUri,
-                            id
-                        )
+                        DocumentsContract
+                            .buildDocumentUriUsingTree(
+                                folderUri,
+                                id
+                            )
 
                     scanFolder(childUri, tracks)
 
                 } else {
 
                     val extension =
-                        name.substringAfterLast('.', "")
-                            .lowercase()
+                        name.substringAfterLast(
+                            '.',
+                            ""
+                        ).lowercase()
 
                     if (extension in MUSIC_EXTENSIONS) {
 
                         val fileUri =
-                            DocumentsContract.buildDocumentUriUsingTree(
-                                folderUri,
-                                id
-                            )
+                            DocumentsContract
+                                .buildDocumentUriUsingTree(
+                                    folderUri,
+                                    id
+                                )
 
                         val track =
-                            readMetadata(fileUri, name)
+                            readMetadata(
+                                fileUri,
+                                name
+                            )
 
                         tracks.add(track)
                     }
@@ -316,44 +347,57 @@ class MainActivity : Activity() {
     ): TrackInfo {
 
         val format =
-            fileName.substringAfterLast('.', "")
-                .lowercase()
+            fileName.substringAfterLast(
+                '.',
+                ""
+            ).lowercase()
 
-        val retriever = MediaMetadataRetriever()
+        val retriever =
+            MediaMetadataRetriever()
 
         return try {
 
-            retriever.setDataSource(this, uri)
-
-            val title = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_TITLE
+            retriever.setDataSource(
+                this,
+                uri
             )
 
-            val artist = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_ARTIST
-            )
+            val title =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_TITLE
+                )
 
-            val album = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_ALBUM
-            )
+            val artist =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ARTIST
+                )
 
-            val genre = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_GENRE
-            )
+            val album =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ALBUM
+                )
 
-            val bitrate = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_BITRATE
-            )
+            val genre =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_GENRE
+                )
 
-            val sampleRate = retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_SAMPLERATE
-            )
+            val bitrate =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_BITRATE
+                )
 
-            val quality = buildQuality(
-                format,
-                bitrate,
-                sampleRate
-            )
+            val sampleRate =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_SAMPLERATE
+                )
+
+            val quality =
+                buildQuality(
+                    format,
+                    bitrate,
+                    sampleRate
+                )
 
             TrackInfo(
                 uri = uri.toString(),
@@ -394,8 +438,11 @@ class MainActivity : Activity() {
         sampleRate: String?
     ): String? {
 
-        val rate = sampleRate?.toLongOrNull()
-        val bit = bitrate?.toLongOrNull()
+        val rate =
+            sampleRate?.toLongOrNull()
+
+        val bit =
+            bitrate?.toLongOrNull()
 
         if (format == "flac" && rate != null) {
             return "${rate / 1000} kHz"
@@ -416,20 +463,54 @@ class MainActivity : Activity() {
         tracks: List<TrackInfo>
     ) {
 
-        val db = database.writableDatabase
+        val db =
+            database.writableDatabase
 
         for (track in tracks) {
 
-            val values = ContentValues()
+            val values =
+                ContentValues()
 
-            values.put("uri", track.uri)
-            values.put("file_name", track.fileName)
-            values.put("title", track.title)
-            values.put("artist", track.artist)
-            values.put("album", track.album)
-            values.put("genre", track.genre)
-            values.put("format", track.format)
-            values.put("quality", track.quality)
+            values.put(
+                "uri",
+                track.uri
+            )
+
+            values.put(
+                "file_name",
+                track.fileName
+            )
+
+            values.put(
+                "title",
+                track.title
+            )
+
+            values.put(
+                "artist",
+                track.artist
+            )
+
+            values.put(
+                "album",
+                track.album
+            )
+
+            values.put(
+                "genre",
+                track.genre
+            )
+
+            values.put(
+                "format",
+                track.format
+            )
+
+            values.put(
+                "quality",
+                track.quality
+            )
+
             values.put(
                 "date_added",
                 System.currentTimeMillis()
