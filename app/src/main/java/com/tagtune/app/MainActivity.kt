@@ -1,7 +1,9 @@
 package com.tagtune.app
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Intent
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.graphics.Color
@@ -11,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.provider.DocumentsContract
+import java.util.Locale
 
 class MainActivity : Activity() {
 
@@ -180,174 +183,8 @@ class MainActivity : Activity() {
             }
 
             folderText.text = "Выбрано:\n$uri"
-
             countText.text = "Нажми «Сканировать»"
 
             tracksContainer.removeAllViews()
         }
-    }
-
-    private fun scanSelectedFolder() {
-
-        val uriText = folderText.text.toString()
-
-        if (!uriText.startsWith("Выбрано:")) {
-            countText.text = "Сначала выбери папку"
-            return
-        }
-
-        val uriString = uriText.substringAfter("\n").trim()
-
-        val folderUri = try {
-            Uri.parse(uriString)
-        } catch (_: Exception) {
-            null
-        }
-
-        if (folderUri == null) {
-            countText.text = "Не удалось открыть папку"
-            return
-        }
-
-        countText.text = "Сканирование..."
-
-        tracksContainer.removeAllViews()
-
-        Thread {
-
-            val tracks = mutableListOf<String>()
-
-            scanFolder(folderUri, tracks)
-
-            saveTracksToDatabase(folderUri, tracks)
-
-            runOnUiThread {
-
-                countText.text =
-                    "Найдено треков: ${tracks.size}"
-
-                if (tracks.isEmpty()) {
-
-                    val emptyText = TextView(this).apply {
-                        text = "Музыкальные файлы не найдены"
-                        textSize = 16f
-                        setPadding(0, 20, 0, 20)
-                    }
-
-                    tracksContainer.addView(emptyText)
-
-                } else {
-
-                    tracks.forEach { fileName ->
-
-                        val trackText = TextView(this).apply {
-                            text = fileName
-                            textSize = 16f
-                            setTextColor(Color.BLACK)
-                            setPadding(8, 14, 8, 14)
-                        }
-
-                        tracksContainer.addView(trackText)
-                    }
-                }
-            }
-
-        }.start()
-    }
-
-    private fun saveTracksToDatabase(
-        folderUri: Uri,
-        tracks: List<String>
-    ) {
-
-        val db = database.writableDatabase
-
-        for (fileName in tracks) {
-
-            val fileUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-                folderUri,
-                DocumentsContract.getTreeDocumentId(folderUri)
-            )
-
-            val values = android.content.ContentValues().apply {
-                put("uri", "$fileUri/$fileName")
-                put("file_name", fileName)
-                put("date_added", System.currentTimeMillis())
-            }
-
-            db.insertWithOnConflict(
-                "tracks",
-                null,
-                values,
-                android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE
-            )
-        }
-    }
-
-    private fun scanFolder(
-        folderUri: Uri,
-        tracks: MutableList<String>
-    ) {
-
-        val childrenUri =
-            DocumentsContract.buildChildDocumentsUriUsingTree(
-                folderUri,
-                DocumentsContract.getTreeDocumentId(folderUri)
-            )
-
-        val projection = arrayOf(
-            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
-        )
-
-        contentResolver.query(
-            childrenUri,
-            projection,
-            null,
-            null,
-            null
-        )?.use { cursor ->
-
-            val idIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID
-            )
-
-            val nameIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME
-            )
-
-            val mimeIndex = cursor.getColumnIndex(
-                DocumentsContract.Document.COLUMN_MIME_TYPE
-            )
-
-            while (cursor.moveToNext()) {
-
-                val id = cursor.getString(idIndex)
-                val name = cursor.getString(nameIndex)
-                val mime = cursor.getString(mimeIndex)
-
-                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-
-                    val childUri =
-                        DocumentsContract.buildDocumentUriUsingTree(
-                            folderUri,
-                            id
-                        )
-
-                    scanFolder(childUri, tracks)
-
-                } else {
-
-                    val extension = name
-                        .substringAfterLast('.', "")
-                        .lowercase()
-
-                    if (extension in MUSIC_EXTENSIONS) {
-                        tracks.add(name)
-                    }
-                }
-            }
-        }
-    }
-}
+   
