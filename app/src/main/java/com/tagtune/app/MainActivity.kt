@@ -3,16 +3,16 @@ package com.tagtune.app
 import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
+import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
-import android.graphics.Color
+import android.provider.DocumentsContract
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.provider.DocumentsContract
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -20,7 +20,6 @@ class MainActivity : Activity() {
     private lateinit var folderText: TextView
     private lateinit var countText: TextView
     private lateinit var tracksContainer: LinearLayout
-
     private lateinit var database: MusicDatabase
 
     companion object {
@@ -69,7 +68,6 @@ class MainActivity : Activity() {
 
         val chooseButton = Button(this).apply {
             text = "Выбрать папку"
-
             setOnClickListener {
                 openFolderPicker()
             }
@@ -77,7 +75,6 @@ class MainActivity : Activity() {
 
         val scanButton = Button(this).apply {
             text = "Сканировать"
-
             setOnClickListener {
                 scanSelectedFolder()
             }
@@ -108,7 +105,6 @@ class MainActivity : Activity() {
 
         root.addView(title)
         root.addView(subtitle)
-
         root.addView(
             chooseButton,
             LinearLayout.LayoutParams(
@@ -116,7 +112,6 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         )
-
         root.addView(
             scanButton,
             LinearLayout.LayoutParams(
@@ -124,10 +119,8 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         )
-
         root.addView(folderText)
         root.addView(countText)
-
         root.addView(
             scrollView,
             LinearLayout.LayoutParams(
@@ -156,7 +149,7 @@ class MainActivity : Activity() {
 
         intent.addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         )
 
         startActivityForResult(intent, PICK_FOLDER)
@@ -184,7 +177,103 @@ class MainActivity : Activity() {
 
             folderText.text = "Выбрано:\n$uri"
             countText.text = "Нажми «Сканировать»"
-
             tracksContainer.removeAllViews()
         }
-   
+    }
+
+    private fun scanSelectedFolder() {
+
+        val uriText = folderText.text.toString()
+
+        if (!uriText.startsWith("Выбрано:")) {
+            countText.text = "Сначала выбери папку"
+            return
+        }
+
+        val uriString = uriText.substringAfter("\n").trim()
+
+        val folderUri = try {
+            Uri.parse(uriString)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (folderUri == null) {
+            countText.text = "Не удалось открыть папку"
+            return
+        }
+
+        countText.text = "Сканирование..."
+        tracksContainer.removeAllViews()
+
+        Thread {
+
+            val tracks = mutableListOf<TrackInfo>()
+
+            scanFolder(folderUri, tracks)
+            saveTracksToDatabase(tracks)
+
+            runOnUiThread {
+
+                countText.text = "Найдено треков: ${tracks.size}"
+
+                if (tracks.isEmpty()) {
+
+                    val emptyText = TextView(this).apply {
+                        text = "Музыкальные файлы не найдены"
+                        textSize = 16f
+                        setPadding(0, 20, 0, 20)
+                    }
+
+                    tracksContainer.addView(emptyText)
+
+                } else {
+
+                    tracks.forEach { track ->
+
+                        val artist =
+                            track.artist ?: "Неизвестный исполнитель"
+
+                        val title =
+                            track.title ?: track.fileName
+
+                        val format =
+                            track.format
+                                ?.uppercase(Locale.getDefault())
+                                ?: "UNKNOWN"
+
+                        val quality =
+                            track.quality ?: ""
+
+                        val trackText = TextView(this).apply {
+                            text = if (quality.isNotEmpty()) {
+                                "$title\n$artist\n$format · $quality"
+                            } else {
+                                "$title\n$artist\n$format"
+                            }
+
+                            textSize = 16f
+                            setTextColor(Color.BLACK)
+                            setPadding(8, 14, 8, 14)
+                        }
+
+                        tracksContainer.addView(trackText)
+                    }
+                }
+            }
+
+        }.start()
+    }
+
+    private fun saveTracksToDatabase(
+        tracks: List<TrackInfo>
+    ) {
+
+        val db = database.writableDatabase
+
+        for (track in tracks) {
+
+            val values = ContentValues().apply {
+                put("uri", track.uri)
+                put("file_name", track.fileName)
+               
