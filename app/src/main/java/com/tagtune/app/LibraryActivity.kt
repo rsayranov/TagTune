@@ -4,7 +4,8 @@ import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
-import android.view.Window
+import android.view.View
+import android.view.WindowInsets
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -22,9 +23,9 @@ class LibraryActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.setStatusBarColor(Color.WHITE)
+        window.statusBarColor = Color.WHITE
         window.decorView.systemUiVisibility =
-            android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
 
         database = MusicDatabase(this)
 
@@ -43,8 +44,29 @@ class LibraryActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 16, 24, 16)
             setBackgroundColor(Color.WHITE)
+        }
+
+        root.setOnApplyWindowInsetsListener { view, insets ->
+
+            val statusBarHeight =
+                insets.getInsets(
+                    WindowInsets.Type.statusBars()
+                ).top
+
+            val navigationBarHeight =
+                insets.getInsets(
+                    WindowInsets.Type.navigationBars()
+                ).bottom
+
+            view.setPadding(
+                24,
+                statusBarHeight + 16,
+                24,
+                navigationBarHeight + 16
+            )
+
+            insets
         }
 
         val title = TextView(this).apply {
@@ -317,84 +339,4 @@ class LibraryActivity : Activity() {
             null,
             null,
             null,
-            "tags COLLATE NOCASE ASC"
-        )
-
-        val tagCounts = linkedMapOf<String, Int>()
-
-        cursor.use {
-
-            while (it.moveToNext()) {
-
-                val tags =
-                    it.getString(
-                        it.getColumnIndexOrThrow("tags")
-                    )
-
-                tags.split(
-                    ",",
-                    "\n",
-                    ";"
-                ).forEach { rawTag ->
-
-                    val tag = rawTag.trim()
-
-                    if (tag.isNotEmpty()) {
-                        tagCounts[tag] =
-                            (tagCounts[tag] ?: 0) + 1
-                    }
-                }
-            }
-        }
-
-        if (tagCounts.isEmpty()) {
-            showEmpty()
-            return
-        }
-
-        tagCounts
-            .toList()
-            .sortedBy {
-                it.first.lowercase(Locale.getDefault())
-            }
-            .forEach { (tag, count) ->
-
-                val row = TextView(this).apply {
-                    text = "$tag\n$count треков"
-                    textSize = 17f
-                    setTextColor(Color.BLACK)
-                    setPadding(8, 16, 8, 16)
-                }
-
-                contentContainer.addView(row)
-                addDivider()
-            }
-    }
-
-    private fun addDivider() {
-
-        val divider = TextView(this).apply {
-            text = ""
-            setBackgroundColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                1
-            )
-        }
-
-        contentContainer.addView(divider)
-    }
-
-    private fun showEmpty() {
-
-        val empty = TextView(this).apply {
-            text = "Медиатека пуста\n\nСначала просканируй папку с музыкой."
-            textSize = 17f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 40)
-        }
-
-        contentContainer.addView(empty)
-    }
-}
+           
