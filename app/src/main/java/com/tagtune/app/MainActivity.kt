@@ -106,20 +106,6 @@ class MainActivity : Activity() {
             )
         )
 
-        val navigation = TextView(this)
-        navigation.text = "Медиатека        Теги        Поиск        Настройки"
-        navigation.textSize = 14f
-        navigation.setTextColor(Color.DKGRAY)
-        navigation.gravity = Gravity.CENTER
-
-        navigation.setOnClickListener {
-            startActivity(
-                Intent(this, LibraryActivity::class.java)
-            )
-        }
-
-        root.addView(navigation)
-
         setContentView(root)
     }
 
@@ -141,9 +127,16 @@ class MainActivity : Activity() {
         resultCode: Int,
         data: Intent?
     ) {
-        super.onActivityResult(requestCode, resultCode, data)
+        super.onActivityResult(
+            requestCode,
+            resultCode,
+            data
+        )
 
-        if (requestCode != PICK_FOLDER || resultCode != RESULT_OK) {
+        if (
+            requestCode != PICK_FOLDER ||
+            resultCode != RESULT_OK
+        ) {
             return
         }
 
@@ -164,27 +157,45 @@ class MainActivity : Activity() {
 
     private fun scanSelectedFolder() {
 
-        val selectedFolderText = folderText.text.toString()
+        val selectedFolderText =
+            folderText.text.toString()
 
-        if (!selectedFolderText.startsWith("Выбрано:")) {
-            countText.text = "Сначала выбери папку"
+        if (
+            !selectedFolderText.startsWith(
+                "Выбрано:"
+            )
+        ) {
+            countText.text =
+                "Сначала выбери папку"
             return
         }
 
         val uriString =
-            selectedFolderText.substringAfter("\n").trim()
+            selectedFolderText
+                .substringAfter("\n")
+                .trim()
 
-        val folderUri = Uri.parse(uriString)
+        val folderUri =
+            Uri.parse(uriString)
 
-        countText.text = "Сканирование..."
+        countText.text =
+            "Сканирование..."
+
         tracksContainer.removeAllViews()
 
         Thread {
 
-            val tracks = mutableListOf<TrackInfo>()
+            val tracks =
+                mutableListOf<TrackInfo>()
 
-            scanFolder(folderUri, tracks)
-            saveTracksToDatabase(tracks)
+            scanFolder(
+                folderUri,
+                tracks
+            )
+
+            saveTracksToDatabase(
+                tracks
+            )
 
             runOnUiThread {
 
@@ -193,20 +204,33 @@ class MainActivity : Activity() {
 
                 if (tracks.isEmpty()) {
 
-                    val emptyText = TextView(this).apply {
-                        this.text = "Музыкальные файлы не найдены"
-                        textSize = 16f
-                        setPadding(0, 20, 0, 20)
-                    }
+                    val emptyText =
+                        TextView(this).apply {
 
-                    tracksContainer.addView(emptyText)
+                            this.text =
+                                "Музыкальные файлы не найдены"
+
+                            textSize = 16f
+
+                            setPadding(
+                                0,
+                                20,
+                                0,
+                                20
+                            )
+                        }
+
+                    tracksContainer.addView(
+                        emptyText
+                    )
 
                 } else {
 
                     tracks.forEach { track ->
 
                         val titleText =
-                            track.title ?: track.fileName
+                            track.title
+                                ?: track.fileName
 
                         val artistText =
                             track.artist
@@ -214,7 +238,9 @@ class MainActivity : Activity() {
 
                         val formatText =
                             track.format
-                                ?.uppercase(Locale.getDefault())
+                                ?.uppercase(
+                                    Locale.getDefault()
+                                )
                                 ?: "UNKNOWN"
 
                         val qualityText =
@@ -224,23 +250,39 @@ class MainActivity : Activity() {
                             TextView(this).apply {
 
                                 this.text =
-                                    if (qualityText != null) {
+                                    if (
+                                        qualityText != null
+                                    ) {
+
                                         "$titleText\n" +
                                             "$artistText\n" +
                                             "$formatText · " +
                                             qualityText
+
                                     } else {
+
                                         "$titleText\n" +
                                             "$artistText\n" +
                                             formatText
                                     }
 
                                 textSize = 16f
-                                setTextColor(Color.BLACK)
-                                setPadding(8, 14, 8, 14)
+
+                                setTextColor(
+                                    Color.BLACK
+                                )
+
+                                setPadding(
+                                    8,
+                                    14,
+                                    8,
+                                    14
+                                )
                             }
 
-                        tracksContainer.addView(trackText)
+                        tracksContainer.addView(
+                            trackText
+                        )
                     }
                 }
             }
@@ -254,19 +296,24 @@ class MainActivity : Activity() {
     ) {
 
         val documentId =
-            DocumentsContract.getTreeDocumentId(folderUri)
+            DocumentsContract
+                .getTreeDocumentId(
+                    folderUri
+                )
 
         val childrenUri =
-            DocumentsContract.buildChildDocumentsUriUsingTree(
-                folderUri,
-                documentId
-            )
+            DocumentsContract
+                .buildChildDocumentsUriUsingTree(
+                    folderUri,
+                    documentId
+                )
 
-        val projection = arrayOf(
-            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
-        )
+        val projection =
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+            )
 
         contentResolver.query(
             childrenUri,
@@ -278,28 +325,43 @@ class MainActivity : Activity() {
 
             val idIndex =
                 cursor.getColumnIndex(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                    DocumentsContract.Document
+                        .COLUMN_DOCUMENT_ID
                 )
 
             val nameIndex =
                 cursor.getColumnIndex(
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                    DocumentsContract.Document
+                        .COLUMN_DISPLAY_NAME
                 )
 
             val mimeIndex =
                 cursor.getColumnIndex(
-                    DocumentsContract.Document.COLUMN_MIME_TYPE
+                    DocumentsContract.Document
+                        .COLUMN_MIME_TYPE
                 )
 
             while (cursor.moveToNext()) {
 
-                val id = cursor.getString(idIndex)
-                val name = cursor.getString(nameIndex)
-                val mime = cursor.getString(mimeIndex)
+                val id =
+                    cursor.getString(
+                        idIndex
+                    )
+
+                val name =
+                    cursor.getString(
+                        nameIndex
+                    )
+
+                val mime =
+                    cursor.getString(
+                        mimeIndex
+                    )
 
                 if (
                     mime ==
-                    DocumentsContract.Document.MIME_TYPE_DIR
+                    DocumentsContract.Document
+                        .MIME_TYPE_DIR
                 ) {
 
                     val childUri =
@@ -309,7 +371,10 @@ class MainActivity : Activity() {
                                 id
                             )
 
-                    scanFolder(childUri, tracks)
+                    scanFolder(
+                        childUri,
+                        tracks
+                    )
 
                 } else {
 
@@ -319,7 +384,10 @@ class MainActivity : Activity() {
                             ""
                         ).lowercase()
 
-                    if (extension in MUSIC_EXTENSIONS) {
+                    if (
+                        extension in
+                        MUSIC_EXTENSIONS
+                    ) {
 
                         val fileUri =
                             DocumentsContract
@@ -364,32 +432,44 @@ class MainActivity : Activity() {
 
             val title =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_TITLE
+                    MediaMetadataRetriever
+                        .METADATA_KEY_TITLE
                 )
 
             val artist =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_ARTIST
+                    MediaMetadataRetriever
+                        .METADATA_KEY_ARTIST
                 )
 
             val album =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_ALBUM
+                    MediaMetadataRetriever
+                        .METADATA_KEY_ALBUM
                 )
 
             val genre =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_GENRE
+                    MediaMetadataRetriever
+                        .METADATA_KEY_GENRE
+                )
+
+            val comment =
+                retriever.extractMetadata(
+                    MediaMetadataRetriever
+                        .METADATA_KEY_CD_TRACK_NUMBER
                 )
 
             val bitrate =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_BITRATE
+                    MediaMetadataRetriever
+                        .METADATA_KEY_BITRATE
                 )
 
             val sampleRate =
                 retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_SAMPLERATE
+                    MediaMetadataRetriever
+                        .METADATA_KEY_SAMPLERATE
                 )
 
             val quality =
@@ -444,7 +524,10 @@ class MainActivity : Activity() {
         val bit =
             bitrate?.toLongOrNull()
 
-        if (format == "flac" && rate != null) {
+        if (
+            format == "flac" &&
+            rate != null
+        ) {
             return "${rate / 1000} kHz"
         }
 
@@ -520,7 +603,8 @@ class MainActivity : Activity() {
                 "tracks",
                 null,
                 values,
-                android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE
+                android.database.sqlite.SQLiteDatabase
+                    .CONFLICT_IGNORE
             )
         }
     }
