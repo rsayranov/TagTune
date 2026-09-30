@@ -1,6 +1,7 @@
 package com.tagtune.app
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -52,10 +53,14 @@ class LibraryActivity : Activity() {
         root.setOnApplyWindowInsetsListener { view, insets ->
 
             val statusBarHeight =
-                insets.getInsets(WindowInsets.Type.statusBars()).top
+                insets.getInsets(
+                    WindowInsets.Type.statusBars()
+                ).top
 
             val navigationBarHeight =
-                insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+                insets.getInsets(
+                    WindowInsets.Type.navigationBars()
+                ).bottom
 
             view.setPadding(
                 24,
@@ -146,11 +151,13 @@ class LibraryActivity : Activity() {
         }
 
         tagsButton.setOnClickListener {
-            Toast.makeText(
-                this,
-                "Теги — следующий экран",
-                Toast.LENGTH_SHORT
-            ).show()
+
+            startActivity(
+                Intent(
+                    this,
+                    TagsActivity::class.java
+                )
+            )
         }
 
         searchButton.setOnClickListener {
