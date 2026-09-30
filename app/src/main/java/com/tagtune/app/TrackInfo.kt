@@ -8,5 +8,6 @@ data class TrackInfo(
     val album: String?,
     val genre: String?,
     val format: String?,
-    val quality: String?
+    val quality: String?,
+    val tags: String? = null
 )
