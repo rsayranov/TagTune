@@ -152,12 +152,14 @@ class LibraryActivity : Activity() {
 
         tagsButton.setOnClickListener {
 
-            startActivity(
-                Intent(
-                    this,
-                    TagsActivity::class.java
-                )
+            val intent = Intent()
+
+            intent.setClassName(
+                this,
+                "com.tagtune.app.TagsActivity"
             )
+
+            startActivity(intent)
         }
 
         searchButton.setOnClickListener {
