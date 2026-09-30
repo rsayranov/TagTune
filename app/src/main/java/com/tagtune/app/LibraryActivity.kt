@@ -6,10 +6,12 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
+import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.util.Locale
 
 class LibraryActivity : Activity() {
@@ -59,7 +61,7 @@ class LibraryActivity : Activity() {
                 24,
                 statusBarHeight + 16,
                 24,
-                navigationBarHeight + 16
+                navigationBarHeight + 8
             )
 
             insets
@@ -115,22 +117,102 @@ class LibraryActivity : Activity() {
             )
         )
 
-        val navigation = TextView(this)
+        val navigation = LinearLayout(this)
 
-        navigation.text =
-            "Медиатека        Теги        Поиск        Настройки"
+        navigation.orientation =
+            LinearLayout.HORIZONTAL
 
-        navigation.textSize = 14f
-        navigation.setTextColor(Color.DKGRAY)
-        navigation.gravity = Gravity.CENTER
-        navigation.setPadding(0, 16, 0, 8)
+        navigation.gravity =
+            Gravity.CENTER
 
-        root.addView(navigation)
+        val libraryButton =
+            createNavigationButton("Медиатека")
+
+        val tagsButton =
+            createNavigationButton("Теги")
+
+        val searchButton =
+            createNavigationButton("Поиск")
+
+        val settingsButton =
+            createNavigationButton("Настройки")
+
+        libraryButton.setOnClickListener {
+            Toast.makeText(
+                this,
+                "Медиатека",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        tagsButton.setOnClickListener {
+            Toast.makeText(
+                this,
+                "Теги — следующий экран",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        searchButton.setOnClickListener {
+            Toast.makeText(
+                this,
+                "Поиск — следующий экран",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        settingsButton.setOnClickListener {
+            Toast.makeText(
+                this,
+                "Настройки — следующий экран",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        navigation.addView(libraryButton)
+        navigation.addView(tagsButton)
+        navigation.addView(searchButton)
+        navigation.addView(settingsButton)
+
+        root.addView(
+            navigation,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         setContentView(root)
 
         createCategories()
         loadCategory()
+    }
+
+    private fun createNavigationButton(
+        textValue: String
+    ): Button {
+
+        val button = Button(this)
+
+        button.text = textValue
+        button.textSize = 12f
+        button.setTextColor(Color.DKGRAY)
+
+        button.setPadding(
+            4,
+            4,
+            4,
+            4
+        )
+
+        button.layoutParams =
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+
+        return button
     }
 
     private fun createCategories() {
@@ -151,7 +233,12 @@ class LibraryActivity : Activity() {
 
             categoryText.text = category
             categoryText.textSize = 15f
-            categoryText.setPadding(18, 10, 18, 10)
+            categoryText.setPadding(
+                18,
+                10,
+                18,
+                10
+            )
 
             if (category == selectedCategory) {
 
@@ -284,14 +371,21 @@ class LibraryActivity : Activity() {
 
                 artistText.textSize = 15f
                 artistText.setTextColor(Color.DKGRAY)
-                artistText.setPadding(0, 4, 0, 0)
+                artistText.setPadding(
+                    0,
+                    4,
+                    0,
+                    0
+                )
 
                 row.addView(artistText)
 
                 val qualityText = TextView(this)
 
                 val formatValue =
-                    format?.uppercase(Locale.getDefault()) ?: ""
+                    format?.uppercase(
+                        Locale.getDefault()
+                    ) ?: ""
 
                 val qualityValue =
                     quality ?: ""
@@ -305,7 +399,12 @@ class LibraryActivity : Activity() {
 
                 qualityText.textSize = 13f
                 qualityText.setTextColor(Color.GRAY)
-                qualityText.setPadding(0, 4, 0, 0)
+                qualityText.setPadding(
+                    0,
+                    4,
+                    0,
+                    0
+                )
 
                 row.addView(qualityText)
 
@@ -317,7 +416,9 @@ class LibraryActivity : Activity() {
         }
     }
 
-    private fun loadUniqueValues(column: String) {
+    private fun loadUniqueValues(
+        column: String
+    ) {
 
         val db = database.readableDatabase
 
@@ -430,6 +531,7 @@ class LibraryActivity : Activity() {
 
         val sortedTags =
             tagCounts.toList().sortedBy {
+
                 it.first.lowercase(
                     Locale.getDefault()
                 )
@@ -461,15 +563,15 @@ class LibraryActivity : Activity() {
 
         val divider = View(this)
 
-        divider.setBackgroundColor(Color.LTGRAY)
+        divider.setBackgroundColor(
+            Color.LTGRAY
+        )
 
-        val params =
+        divider.layoutParams =
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 1
             )
-
-        divider.layoutParams = params
 
         contentContainer.addView(divider)
     }
