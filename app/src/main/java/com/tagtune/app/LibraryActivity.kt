@@ -1,7 +1,6 @@
 package com.tagtune.app
 
 import android.app.Activity
-import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -143,26 +142,23 @@ class LibraryActivity : Activity() {
             createNavigationButton("Настройки")
 
         libraryButton.setOnClickListener {
-            Toast.makeText(
-                this,
-                "Медиатека",
-                Toast.LENGTH_SHORT
-            ).show()
+
+            selectedCategory = "Треки"
+
+            createCategories()
+            loadCategory()
         }
 
         tagsButton.setOnClickListener {
 
-            val intent = Intent()
+            selectedCategory = "Теги"
 
-            intent.setClassName(
-                this,
-                "com.tagtune.app.TagsActivity"
-            )
-
-            startActivity(intent)
+            createCategories()
+            loadCategory()
         }
 
         searchButton.setOnClickListener {
+
             Toast.makeText(
                 this,
                 "Поиск — следующий экран",
@@ -171,6 +167,7 @@ class LibraryActivity : Activity() {
         }
 
         settingsButton.setOnClickListener {
+
             Toast.makeText(
                 this,
                 "Настройки — следующий экран",
@@ -495,7 +492,7 @@ class LibraryActivity : Activity() {
             null,
             null,
             null,
-            "tags COLLATE NOCASE ASC"
+            null
         )
 
         val tagCounts =
@@ -533,7 +530,22 @@ class LibraryActivity : Activity() {
 
         if (tagCounts.isEmpty()) {
 
-            showEmpty()
+            val empty = TextView(this)
+
+            empty.text =
+                "Тегов пока нет"
+
+            empty.textSize = 17f
+            empty.setTextColor(Color.DKGRAY)
+            empty.gravity = Gravity.CENTER
+            empty.setPadding(
+                0,
+                40,
+                0,
+                40
+            )
+
+            contentContainer.addView(empty)
 
             return
         }
