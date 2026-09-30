@@ -42,22 +42,18 @@ class LibraryActivity : Activity() {
 
     private fun showLibrary() {
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-        }
+        val root = LinearLayout(this)
+
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(Color.WHITE)
 
         root.setOnApplyWindowInsetsListener { view, insets ->
 
             val statusBarHeight =
-                insets.getInsets(
-                    WindowInsets.Type.statusBars()
-                ).top
+                insets.getInsets(WindowInsets.Type.statusBars()).top
 
             val navigationBarHeight =
-                insets.getInsets(
-                    WindowInsets.Type.navigationBars()
-                ).bottom
+                insets.getInsets(WindowInsets.Type.navigationBars()).bottom
 
             view.setPadding(
                 24,
@@ -69,39 +65,45 @@ class LibraryActivity : Activity() {
             insets
         }
 
-        val title = TextView(this).apply {
-            text = "Медиатека"
-            textSize = 28f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 20)
-        }
+        val title = TextView(this)
 
-        categoryContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
+        title.text = "Медиатека"
+        title.textSize = 28f
+        title.setTextColor(Color.BLACK)
+        title.gravity = Gravity.CENTER
+        title.setPadding(0, 8, 0, 20)
 
-        val categoryScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(categoryContainer)
-        }
+        root.addView(title)
+
+        categoryContainer = LinearLayout(this)
+
+        categoryContainer.orientation =
+            LinearLayout.HORIZONTAL
+
+        val categoryScroll =
+            HorizontalScrollView(this)
+
+        categoryScroll.isHorizontalScrollBarEnabled = false
+        categoryScroll.addView(categoryContainer)
 
         root.addView(categoryScroll)
 
-        val sortText = TextView(this).apply {
-            text = "Недавно добавленные"
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            setPadding(8, 16, 8, 16)
-        }
+        val sortText = TextView(this)
+
+        sortText.text = "Недавно добавленные"
+        sortText.textSize = 14f
+        sortText.setTextColor(Color.DKGRAY)
+        sortText.setPadding(8, 16, 8, 16)
 
         root.addView(sortText)
 
-        contentContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        contentContainer = LinearLayout(this)
+
+        contentContainer.orientation =
+            LinearLayout.VERTICAL
 
         val scrollView = ScrollView(this)
+
         scrollView.addView(contentContainer)
 
         root.addView(
@@ -113,13 +115,15 @@ class LibraryActivity : Activity() {
             )
         )
 
-        val navigation = TextView(this).apply {
-            text = "Медиатека        Теги        Поиск        Настройки"
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 8)
-        }
+        val navigation = TextView(this)
+
+        navigation.text =
+            "Медиатека        Теги        Поиск        Настройки"
+
+        navigation.textSize = 14f
+        navigation.setTextColor(Color.DKGRAY)
+        navigation.gravity = Gravity.CENTER
+        navigation.setPadding(0, 16, 0, 8)
 
         root.addView(navigation)
 
@@ -141,28 +145,34 @@ class LibraryActivity : Activity() {
             "Теги"
         )
 
-        categories.forEach { category ->
+        for (category in categories) {
 
-            val categoryText = TextView(this).apply {
-                text = category
-                textSize = 15f
-                setPadding(18, 10, 18, 10)
+            val categoryText = TextView(this)
 
-                if (category == selectedCategory) {
-                    setTextColor(Color.BLACK)
-                    setTypeface(
-                        null,
-                        android.graphics.Typeface.BOLD
-                    )
-                } else {
-                    setTextColor(Color.GRAY)
-                }
+            categoryText.text = category
+            categoryText.textSize = 15f
+            categoryText.setPadding(18, 10, 18, 10)
 
-                setOnClickListener {
-                    selectedCategory = category
-                    createCategories()
-                    loadCategory()
-                }
+            if (category == selectedCategory) {
+
+                categoryText.setTextColor(Color.BLACK)
+
+                categoryText.setTypeface(
+                    null,
+                    android.graphics.Typeface.BOLD
+                )
+
+            } else {
+
+                categoryText.setTextColor(Color.GRAY)
+            }
+
+            categoryText.setOnClickListener {
+
+                selectedCategory = category
+
+                createCategories()
+                loadCategory()
             }
 
             categoryContainer.addView(categoryText)
@@ -174,11 +184,26 @@ class LibraryActivity : Activity() {
         contentContainer.removeAllViews()
 
         when (selectedCategory) {
-            "Треки" -> loadTracks()
-            "Исполнители" -> loadUniqueValues("artist")
-            "Альбомы" -> loadUniqueValues("album")
-            "Жанры" -> loadUniqueValues("genre")
-            "Теги" -> loadTags()
+
+            "Треки" -> {
+                loadTracks()
+            }
+
+            "Исполнители" -> {
+                loadUniqueValues("artist")
+            }
+
+            "Альбомы" -> {
+                loadUniqueValues("album")
+            }
+
+            "Жанры" -> {
+                loadUniqueValues("genre")
+            }
+
+            "Теги" -> {
+                loadTags()
+            }
         }
     }
 
@@ -230,49 +255,62 @@ class LibraryActivity : Activity() {
                         it.getColumnIndexOrThrow("quality")
                     )
 
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(8, 14, 8, 14)
-                }
+                val row = LinearLayout(this)
 
-                val titleText = TextView(this).apply {
-                    text = title ?: "Без названия"
-                    textSize = 17f
-                    setTextColor(Color.BLACK)
-                }
+                row.orientation =
+                    LinearLayout.VERTICAL
 
-                val artistText = TextView(this).apply {
-                    text = artist ?: "Неизвестный исполнитель"
-                    textSize = 15f
-                    setTextColor(Color.DKGRAY)
-                    setPadding(0, 4, 0, 0)
-                }
+                row.setPadding(
+                    8,
+                    14,
+                    8,
+                    14
+                )
 
-                val qualityText = TextView(this).apply {
+                val titleText = TextView(this)
 
-                    val formatValue =
-                        format?.uppercase(Locale.getDefault()) ?: ""
+                titleText.text =
+                    title ?: "Без названия"
 
-                    val qualityValue =
-                        quality ?: ""
-
-                    text =
-                        if (qualityValue.isNotEmpty()) {
-                            "$formatValue · $qualityValue"
-                        } else {
-                            formatValue
-                        }
-
-                    textSize = 13f
-                    setTextColor(Color.GRAY)
-                    setPadding(0, 4, 0, 0)
-                }
+                titleText.textSize = 17f
+                titleText.setTextColor(Color.BLACK)
 
                 row.addView(titleText)
+
+                val artistText = TextView(this)
+
+                artistText.text =
+                    artist ?: "Неизвестный исполнитель"
+
+                artistText.textSize = 15f
+                artistText.setTextColor(Color.DKGRAY)
+                artistText.setPadding(0, 4, 0, 0)
+
                 row.addView(artistText)
+
+                val qualityText = TextView(this)
+
+                val formatValue =
+                    format?.uppercase(Locale.getDefault()) ?: ""
+
+                val qualityValue =
+                    quality ?: ""
+
+                qualityText.text =
+                    if (qualityValue.isNotEmpty()) {
+                        "$formatValue · $qualityValue"
+                    } else {
+                        formatValue
+                    }
+
+                qualityText.textSize = 13f
+                qualityText.setTextColor(Color.GRAY)
+                qualityText.setPadding(0, 4, 0, 0)
+
                 row.addView(qualityText)
 
                 contentContainer.addView(row)
+
                 addDivider()
 
             } while (it.moveToNext())
@@ -314,14 +352,22 @@ class LibraryActivity : Activity() {
                         it.getColumnIndexOrThrow("track_count")
                     )
 
-                val row = TextView(this).apply {
-                    text = "$value\n$count треков"
-                    textSize = 17f
-                    setTextColor(Color.BLACK)
-                    setPadding(8, 16, 8, 16)
-                }
+                val row = TextView(this)
+
+                row.text =
+                    "$value\n$count треков"
+
+                row.textSize = 17f
+                row.setTextColor(Color.BLACK)
+                row.setPadding(
+                    8,
+                    16,
+                    8,
+                    16
+                )
 
                 contentContainer.addView(row)
+
                 addDivider()
 
             } while (it.moveToNext())
@@ -339,4 +385,112 @@ class LibraryActivity : Activity() {
             null,
             null,
             null,
-           
+            "tags COLLATE NOCASE ASC"
+        )
+
+        val tagCounts =
+            linkedMapOf<String, Int>()
+
+        cursor.use {
+
+            while (it.moveToNext()) {
+
+                val tags =
+                    it.getString(
+                        it.getColumnIndexOrThrow("tags")
+                    )
+
+                val parts =
+                    tags.split(
+                        ",",
+                        "\n",
+                        ";"
+                    )
+
+                for (rawTag in parts) {
+
+                    val tag =
+                        rawTag.trim()
+
+                    if (tag.isNotEmpty()) {
+
+                        tagCounts[tag] =
+                            (tagCounts[tag] ?: 0) + 1
+                    }
+                }
+            }
+        }
+
+        if (tagCounts.isEmpty()) {
+
+            showEmpty()
+
+            return
+        }
+
+        val sortedTags =
+            tagCounts.toList().sortedBy {
+                it.first.lowercase(
+                    Locale.getDefault()
+                )
+            }
+
+        for ((tag, count) in sortedTags) {
+
+            val row = TextView(this)
+
+            row.text =
+                "$tag\n$count треков"
+
+            row.textSize = 17f
+            row.setTextColor(Color.BLACK)
+            row.setPadding(
+                8,
+                16,
+                8,
+                16
+            )
+
+            contentContainer.addView(row)
+
+            addDivider()
+        }
+    }
+
+    private fun addDivider() {
+
+        val divider = View(this)
+
+        divider.setBackgroundColor(Color.LTGRAY)
+
+        val params =
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1
+            )
+
+        divider.layoutParams = params
+
+        contentContainer.addView(divider)
+    }
+
+    private fun showEmpty() {
+
+        val empty = TextView(this)
+
+        empty.text =
+            "Медиатека пуста\n\nСначала просканируй папку с музыкой."
+
+        empty.textSize = 17f
+        empty.setTextColor(Color.DKGRAY)
+        empty.gravity = Gravity.CENTER
+        empty.setPadding(
+            0,
+            40,
+            0,
+            40
+        )
+
+        contentContainer.addView(empty)
+    }
+}
