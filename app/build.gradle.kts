@@ -27,4 +27,6 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+
+    implementation("org.jaudiotagger:jaudiotagger:2.2.7")
 }
