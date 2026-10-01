@@ -13,6 +13,9 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import java.io.File
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -246,24 +249,50 @@ class MainActivity : Activity() {
                         val qualityText =
                             track.quality
 
+                        val tagsText =
+                            track.tags
+
                         val trackText =
                             TextView(this).apply {
 
                                 this.text =
-                                    if (
-                                        qualityText != null
-                                    ) {
+                                    buildString {
 
-                                        "$titleText\n" +
-                                            "$artistText\n" +
-                                            "$formatText · " +
-                                            qualityText
+                                        append(
+                                            titleText
+                                        )
 
-                                    } else {
+                                        append("\n")
 
-                                        "$titleText\n" +
-                                            "$artistText\n" +
-                                            formatText
+                                        append(
+                                            artistText
+                                        )
+
+                                        append("\n")
+
+                                        if (
+                                            qualityText != null
+                                        ) {
+
+                                            append(
+                                                "$formatText · " +
+                                                    qualityText
+                                            )
+
+                                        } else {
+
+                                            append(
+                                                formatText
+                                            )
+                                        }
+
+                                        if (
+                                            !tagsText.isNullOrBlank()
+                                        ) {
+
+                                            append("\n")
+                                            append(tagsText)
+                                        }
                                     }
 
                                 textSize = 16f
@@ -423,86 +452,57 @@ class MainActivity : Activity() {
         val retriever =
             MediaMetadataRetriever()
 
-        return try {
+        var title: String? = null
+        var artist: String? = null
+        var album: String? = null
+        var genre: String? = null
+        var bitrate: String? = null
+        var sampleRate: String? = null
+
+        try {
 
             retriever.setDataSource(
                 this,
                 uri
             )
 
-            val title =
+            title =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_TITLE
                 )
 
-            val artist =
+            artist =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_ARTIST
                 )
 
-            val album =
+            album =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_ALBUM
                 )
 
-            val genre =
+            genre =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_GENRE
                 )
 
-            val comment =
-                retriever.extractMetadata(
-                    MediaMetadataRetriever
-                        .METADATA_KEY_CD_TRACK_NUMBER
-                )
-
-            val bitrate =
+            bitrate =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_BITRATE
                 )
 
-            val sampleRate =
+            sampleRate =
                 retriever.extractMetadata(
                     MediaMetadataRetriever
                         .METADATA_KEY_SAMPLERATE
                 )
 
-            val quality =
-                buildQuality(
-                    format,
-                    bitrate,
-                    sampleRate
-                )
-
-            TrackInfo(
-                uri = uri.toString(),
-                fileName = fileName,
-                title = title,
-                artist = artist,
-                album = album,
-                genre = genre,
-                format = format,
-                quality = quality
-            )
-
         } catch (_: Exception) {
-
-            TrackInfo(
-                uri = uri.toString(),
-                fileName = fileName,
-                title = null,
-                artist = null,
-                album = null,
-                genre = null,
-                format = format,
-                quality = null
-            )
-
         } finally {
 
             try {
@@ -510,6 +510,126 @@ class MainActivity : Activity() {
             } catch (_: Exception) {
             }
         }
+
+        val tags =
+            readTagsFromComment(
+                uri
+            )
+
+        val quality =
+            buildQuality(
+                format,
+                bitrate,
+                sampleRate
+            )
+
+        return TrackInfo(
+            uri = uri.toString(),
+            fileName = fileName,
+            title = title,
+            artist = artist,
+            album = album,
+            genre = genre,
+            format = format,
+            quality = quality,
+            tags = tags
+        )
+    }
+
+    private fun readTagsFromComment(
+        uri: Uri
+    ): String? {
+
+        val temporaryFile =
+            File.createTempFile(
+                "tagtune_",
+                ".audio",
+                cacheDir
+            )
+
+        return try {
+
+            contentResolver
+                .openInputStream(uri)
+                ?.use { input ->
+
+                    temporaryFile
+                        .outputStream()
+                        .use { output ->
+
+                            input.copyTo(
+                                output
+                            )
+                        }
+                }
+                ?: return null
+
+            val audioFile =
+                AudioFileIO.read(
+                    temporaryFile
+                )
+
+            val tag =
+                audioFile.tag
+                    ?: return null
+
+            val comment =
+                tag.getFirst(
+                    FieldKey.COMMENT
+                )
+
+            if (
+                comment.isNullOrBlank()
+            ) {
+                return null
+            }
+
+            extractHashtagTags(
+                comment
+            )
+
+        } catch (_: Exception) {
+
+            null
+
+        } finally {
+
+            try {
+                temporaryFile.delete()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun extractHashtagTags(
+        comment: String
+    ): String? {
+
+        val tags =
+            Regex(
+                """#[^\s#]+"""
+            )
+                .findAll(comment)
+                .map {
+                    it.value.trim()
+                }
+                .filter {
+                    it.length <= 16
+                }
+                .distinctBy {
+                    it.lowercase(
+                        Locale.getDefault()
+                    )
+                }
+                .toList()
+
+        if (tags.isEmpty()) {
+            return null
+        }
+
+        return tags.joinToString(
+            separator = "\n"
+        )
     }
 
     private fun buildQuality(
@@ -595,17 +715,31 @@ class MainActivity : Activity() {
             )
 
             values.put(
+                "tags",
+                track.tags
+            )
+
+            values.put(
                 "date_added",
                 System.currentTimeMillis()
             )
 
-            db.insertWithOnConflict(
-                "tracks",
-                null,
-                values,
-                android.database.sqlite.SQLiteDatabase
-                    .CONFLICT_IGNORE
-            )
+            val updated =
+                db.update(
+                    "tracks",
+                    values,
+                    "uri = ?",
+                    arrayOf(track.uri)
+                )
+
+            if (updated == 0) {
+
+                db.insert(
+                    "tracks",
+                    null,
+                    values
+                )
+            }
         }
     }
 }
