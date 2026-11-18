@@ -163,8 +163,8 @@ class MainActivity : Activity() {
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(16), dp(8), dp(16), 0)
 
+        // Пустой в покое: здесь появляются только статусы записи
         val info = TextView(this)
-        info.text = "Теги трека. Тап по тегу — убрать его строку из COMMENT."
         box.addView(info)
 
         val scroll = HorizontalScrollView(this)
@@ -174,7 +174,7 @@ class MainActivity : Activity() {
         box.addView(scroll)
 
         val input = AutoCompleteTextView(this)
-        input.hint = "тег… (подсказки из библиотеки)"
+        input.hint = "#"
         input.threshold = 1
         box.addView(input)
 
@@ -188,9 +188,6 @@ class MainActivity : Activity() {
         fun refresh() {
             val cur = tracks.find { it.uri == t.uri } ?: t
             row.removeAllViews()
-            if (cur.tags.isEmpty()) {
-                val none = TextView(this); none.text = "тегов нет"; row.addView(none)
-            }
             for (g in cur.tags) {
                 val chip = TextView(this)
                 chip.text = "#$g ✕"
