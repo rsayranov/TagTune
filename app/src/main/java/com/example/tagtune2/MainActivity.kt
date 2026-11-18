@@ -3,11 +3,14 @@ package com.example.tagtune2
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.HorizontalScrollView
@@ -29,6 +32,9 @@ class MainActivity : Activity() {
     private lateinit var pickBtn: Button
     private lateinit var chipsRow: LinearLayout
     private lateinit var nowText: TextView
+    private lateinit var wave: WaveformView
+    private lateinit var tCur: TextView
+    private lateinit var tDur: TextView
     private lateinit var playBtn: Button
     private lateinit var listBox: LinearLayout
 
@@ -37,55 +43,102 @@ class MainActivity : Activity() {
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
     private var shown = listOf<Track>()
-    private var player: MediaPlayer? = null
-    private var current: Track? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val listener: () -> Unit = { runOnUiThread { refreshNow(); highlightCurrent() } }
+    private val poll = object : Runnable {
+        override fun run() {
+            val p = PlayerService.instance
+            if (p != null && PlayerState.uri != null) {
+                val pos = p.currentPosition(); val dur = PlayerState.durationMs
+                wave.setProgress(if (dur > 0) pos.toFloat() / dur else 0f)
+                tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
+            }
+            handler.postDelayed(this, 400)
+        }
+    }
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     private fun prefs() = getSharedPreferences("tagtune2", MODE_PRIVATE)
     private fun savedTree(): String? = prefs().getString("tree_uri", null)
     private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
+    private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
+        }
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setPadding(dp(14), dp(14), dp(14), dp(14))
 
-        status = TextView(this)
-        status.text = "TagTune2: привет!"
-        root.addView(status)
+        status = TextView(this); status.text = "TagTune2: привет!"; root.addView(status)
 
-        pickBtn = Button(this)
-        pickBtn.text = "📁 Выбрать папку с музыкой"
-        pickBtn.setOnClickListener { pickFolder() }
-        root.addView(pickBtn)
+        pickBtn = Button(this); pickBtn.text = "📁 Выбрать папку с музыкой"
+        pickBtn.setOnClickListener { pickFolder() }; root.addView(pickBtn)
 
         val chipScroll = HorizontalScrollView(this)
-        chipsRow = LinearLayout(this)
-        chipsRow.orientation = LinearLayout.HORIZONTAL
-        chipScroll.addView(chipsRow)
-        root.addView(chipScroll)
+        chipsRow = LinearLayout(this); chipsRow.orientation = LinearLayout.HORIZONTAL
+        chipScroll.addView(chipsRow); root.addView(chipScroll)
 
-        nowText = TextView(this)
-        nowText.text = "Ничего не играет."
-        nowText.setPadding(0, dp(10), 0, dp(6))
-        root.addView(nowText)
+        nowText = TextView(this); nowText.text = "Ничего не играет."
+        nowText.setPadding(0, dp(10), 0, dp(6)); root.addView(nowText)
 
-        playBtn = Button(this)
-        playBtn.text = "▶ Играть / ⏸ Пауза"
-        playBtn.setOnClickListener { toggle() }
-        root.addView(playBtn)
+        wave = WaveformView(this)
+        wave.onSeek = { f -> val d = PlayerState.durationMs; if (d > 0) PlayerService.cmd(this, "seek", seekMs = (f * d).toInt()) }
+        root.addView(wave, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(72)))
+
+        val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
+        tCur = TextView(this); tCur.text = "0:00"
+        val spacer = TextView(this)
+        tDur = TextView(this); tDur.text = "0:00"
+        times.addView(tCur); times.addView(spacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); times.addView(tDur)
+        root.addView(times)
+
+        val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
+        val prevBtn = Button(this); prevBtn.text = "⏮"; prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
+        playBtn = Button(this); playBtn.text = "▶"; playBtn.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        val nextBtn = Button(this); nextBtn.text = "⏭"; nextBtn.setOnClickListener { PlayerService.cmd(this, "next") }
+        val stopBtn = Button(this); stopBtn.text = "⏹"; stopBtn.setOnClickListener { PlayerService.cmd(this, "stop"); wave.setPeaks(null) }
+        transport.addView(prevBtn); transport.addView(playBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); transport.addView(nextBtn); transport.addView(stopBtn)
+        root.addView(transport)
 
         val listScroll = ScrollView(this)
-        listBox = LinearLayout(this)
-        listBox.orientation = LinearLayout.VERTICAL
+        listBox = LinearLayout(this); listBox.orientation = LinearLayout.VERTICAL
         listScroll.addView(listBox)
         root.addView(listScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
-
         if (savedTree() != null) startScan()
         else status.text = "TagTune2: выбери папку, где лежат твои MP3."
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PlayerState.listeners.add(listener)
+        handler.post(poll)
+        refreshNow(); highlightCurrent()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        PlayerState.listeners.remove(listener)
+        handler.removeCallbacks(poll)
+    }
+
+    private fun refreshNow() {
+        nowText.text = if (PlayerState.uri == null) "Ничего не играет."
+            else (if (PlayerState.playing) "▶ " else "⏸ ") + PlayerState.title + " — " + PlayerState.artist
+        playBtn.text = if (PlayerState.playing) "⏸" else "▶"
+    }
+
+    private fun highlightCurrent() {
+        if (listBox.childCount != shown.size) return
+        for (i in shown.indices) {
+            listBox.getChildAt(i)?.setBackgroundColor(
+                if (shown[i].uri == PlayerState.uri) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A")
+            )
+        }
     }
 
     private fun pickFolder() {
@@ -156,27 +209,18 @@ class MainActivity : Activity() {
         return Track(f.uri.toString(), title, artist, tags)
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ: запись в COMMENT ---------- */
+    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
 
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(16), dp(8), dp(16), 0)
-
-        // Пустой в покое: здесь появляются только статусы записи
-        val info = TextView(this)
-        box.addView(info)
-
+        val info = TextView(this); box.addView(info)
         val scroll = HorizontalScrollView(this)
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        scroll.addView(row)
-        box.addView(scroll)
-
+        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
+        scroll.addView(row); box.addView(scroll)
         val input = MultiAutoCompleteTextView(this)
-        input.hint = "#"
-        input.threshold = 1
-        // Подсказки по последнему слову: пробел и запятая = разделители тегов
+        input.hint = "#"; input.threshold = 1
         input.setTokenizer(object : MultiAutoCompleteTextView.Tokenizer {
             override fun findTokenStart(text: CharSequence, cursor: Int): Int {
                 var i = cursor
@@ -191,14 +235,9 @@ class MainActivity : Activity() {
             override fun terminateToken(text: CharSequence): CharSequence = "$text "
         })
         box.addView(input)
-
         val dialog = AlertDialog.Builder(this)
-            .setTitle(t.title)
-            .setView(box)
-            .setPositiveButton("＋ Добавить", null)
-            .setNegativeButton("Закрыть", null)
-            .create()
-
+            .setTitle(t.title).setView(box)
+            .setPositiveButton("＋ Добавить", null).setNegativeButton("Закрыть", null).create()
         fun refresh() {
             val cur = tracks.find { it.uri == t.uri } ?: t
             row.removeAllViews()
@@ -207,10 +246,8 @@ class MainActivity : Activity() {
                 chip.text = "#$g ✕"
                 chip.setPadding(dp(12), dp(8), dp(12), dp(8))
                 val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, 0, dp(8), 0)
-                chip.layoutParams = lp
-                chip.setBackgroundColor(Color.parseColor("#3A2A5A"))
-                chip.setTextColor(Color.WHITE)
+                lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
+                chip.setBackgroundColor(Color.parseColor("#3A2A5A")); chip.setTextColor(Color.WHITE)
                 chip.setOnClickListener {
                     info.text = "Убираю #$g…"
                     writeTag(t, g, false) { ok, msg ->
@@ -222,15 +259,10 @@ class MainActivity : Activity() {
             }
             input.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, allTags()))
         }
-
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                // "рок ночь дорога веселый" -> четыре тега за один проход
-                val tags = input.text.toString()
-                    .split(Regex("[\\s,]+"))
-                    .map { it.trim().removePrefix("#").lowercase() }
-                    .filter { it.isNotEmpty() }
-                    .distinct()
+                val tags = input.text.toString().split(Regex("[\\s,]+"))
+                    .map { it.trim().removePrefix("#").lowercase() }.filter { it.isNotEmpty() }.distinct()
                 if (tags.isEmpty()) return@setOnClickListener
                 info.text = "Записываю: " + tags.joinToString(" ") { "#$it" }
                 writeTags(t, tags, true) { ok, msg ->
@@ -240,8 +272,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        dialog.show()
-        refresh()
+        dialog.show(); refresh()
     }
 
     private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
@@ -249,13 +280,10 @@ class MainActivity : Activity() {
 
     private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
-            var ok = false
-            var msg = "ок"
-            var newTags: List<String>? = null
+            var ok = false; var msg = "ок"; var newTags: List<String>? = null
             try {
                 val uri = Uri.parse(t.uri)
-                val inF = File(cacheDir, "edit_in.mp3")
-                val outF = File(cacheDir, "edit_out.mp3")
+                val inF = File(cacheDir, "edit_in.mp3"); val outF = File(cacheDir, "edit_out.mp3")
                 contentResolver.openInputStream(uri)!!.use { ins -> FileOutputStream(inF).use { ins.copyTo(it) } }
                 val mp3 = Mp3File(inF.absolutePath)
                 if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
@@ -266,8 +294,7 @@ class MainActivity : Activity() {
                 mp3.save(outF.absolutePath)
                 contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
                 newTags = TagParser.extractTags(new)
-                inF.delete(); outF.delete()
-                ok = true
+                inF.delete(); outF.delete(); ok = true
             } catch (e: Exception) {
                 msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — нажми «📁 Папка» и выбери папку заново (нужно право записи)."
             }
@@ -281,7 +308,7 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    /* ---------- список и фильтры ---------- */
+    /* ---------- СПИСОК И ФИЛЬТРЫ ---------- */
 
     private fun rebuildChips() {
         chipsRow.removeAllViews()
@@ -292,8 +319,7 @@ class MainActivity : Activity() {
             chip.text = "#$tag ($n)"
             chip.setPadding(dp(12), dp(8), dp(12), dp(8))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, dp(8), 0)
-            chip.layoutParams = lp
+            lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
             val on = selected.contains(tag)
             chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
             chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
@@ -322,53 +348,27 @@ class MainActivity : Activity() {
             row.text = "🎵 ${t.title}\n👤 ${t.artist}\n🏷 " +
                 (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
             row.setPadding(dp(12), dp(10), dp(12), dp(10))
-            row.setBackgroundColor(if (current?.uri == t.uri) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
+            row.setBackgroundColor(Color.parseColor("#1E1E2A"))
             row.setTextColor(Color.parseColor("#EEEEF5"))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(8))
-            row.layoutParams = lp
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
             row.setOnClickListener { play(t) }
             row.setOnLongClickListener { openEditor(t); true }
             listBox.addView(row)
         }
+        highlightCurrent()
     }
 
-    /* ---------- плеер ---------- */
+    /* ---------- ПЛЕЕР: команды сервису ---------- */
 
     private fun play(t: Track) {
-        current = t
-        nowText.text = "▶ Играет: ${t.title} — ${t.artist}"
-        try {
-            player?.release()
-            player = MediaPlayer().apply {
-                setDataSource(this@MainActivity, Uri.parse(t.uri))
-                setOnCompletionListener { next() }
-                prepare()
-                start()
-            }
-            playBtn.text = "⏸ Пауза"
-        } catch (e: Exception) {
-            nowText.text = "Не удалось играть: ${e.message}"
-        }
-        rebuildList()
-    }
-
-    private fun toggle() {
-        val p = player
-        if (p == null) { shown.firstOrNull()?.let { play(it) }; return }
-        if (p.isPlaying) { p.pause(); playBtn.text = "▶ Играть" }
-        else { p.start(); playBtn.text = "⏸ Пауза" }
-    }
-
-    private fun next() {
-        if (shown.isEmpty()) return
-        val i = shown.indexOfFirst { it.uri == current?.uri }
-        play(shown[(i + 1) % shown.size])
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        player?.release()
-        player = null
+        val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
+        PlayerService.cmd(this, "play", items, shown.indexOf(t))
+        wave.setPeaks(null)
+        Thread {
+            val p = WaveformView.getPeaks(this, t.uri)
+            runOnUiThread { if (PlayerState.uri == t.uri) wave.setPeaks(p) }
+        }.start()
+        highlightCurrent()
     }
 }
