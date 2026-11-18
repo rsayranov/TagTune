@@ -25,6 +25,9 @@ android {
 }
 
 dependencies {
-    // Наша новая, надежная и быстрая библиотека для MP3-тегов!
+    // AndroidX Core KTX - именно здесь живут ContextCompat и ActivityCompat!
+    implementation("androidx.core:core-ktx:1.12.0")
+    
+    // Наша надежная библиотека для MP3-тегов
     implementation("com.mpatric:mp3agic:0.9.1")
 }
