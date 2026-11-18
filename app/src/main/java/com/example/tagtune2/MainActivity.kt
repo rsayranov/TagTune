@@ -9,10 +9,10 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.widget.ArrayAdapter
-import android.widget.AutoCompleteTextView
 import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.documentfile.provider.DocumentFile
@@ -173,9 +173,23 @@ class MainActivity : Activity() {
         scroll.addView(row)
         box.addView(scroll)
 
-        val input = AutoCompleteTextView(this)
+        val input = MultiAutoCompleteTextView(this)
         input.hint = "#"
         input.threshold = 1
+        // Подсказки по последнему слову: пробел и запятая = разделители тегов
+        input.setTokenizer(object : MultiAutoCompleteTextView.Tokenizer {
+            override fun findTokenStart(text: CharSequence, cursor: Int): Int {
+                var i = cursor
+                while (i > 0 && !text[i - 1].isWhitespace() && text[i - 1] != ',') i--
+                return i
+            }
+            override fun findTokenEnd(text: CharSequence, cursor: Int): Int {
+                var i = cursor
+                while (i < text.length && !text[i].isWhitespace() && text[i] != ',') i++
+                return i
+            }
+            override fun terminateToken(text: CharSequence): CharSequence = "$text "
+        })
         box.addView(input)
 
         val dialog = AlertDialog.Builder(this)
@@ -211,11 +225,16 @@ class MainActivity : Activity() {
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val v = input.text.toString().trim().removePrefix("#").lowercase()
-                if (v.isEmpty()) return@setOnClickListener
-                info.text = "Записываю #$v в COMMENT…"
-                writeTag(t, v, true) { ok, msg ->
-                    info.text = if (ok) "Готово: #$v записан с новой строки." else msg
+                // "рок ночь дорога веселый" -> четыре тега за один проход
+                val tags = input.text.toString()
+                    .split(Regex("[\\s,]+"))
+                    .map { it.trim().removePrefix("#").lowercase() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                if (tags.isEmpty()) return@setOnClickListener
+                info.text = "Записываю: " + tags.joinToString(" ") { "#$it" }
+                writeTags(t, tags, true) { ok, msg ->
+                    info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
                     if (ok) input.setText("")
                     refresh(); rebuildChips(); rebuildList()
                 }
@@ -225,7 +244,10 @@ class MainActivity : Activity() {
         refresh()
     }
 
-    private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) {
+    private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
+        writeTags(t, listOf(tag), add, cb)
+
+    private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
             var ok = false
             var msg = "ок"
@@ -238,8 +260,8 @@ class MainActivity : Activity() {
                 val mp3 = Mp3File(inF.absolutePath)
                 if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
                 val old = mp3.id3v2Tag.comment ?: ""
-                val new = if (add) TagParser.addTagToComment(old, tag)
-                          else old.split("\n").filter { it.trim().lowercase() != "#$tag" }.joinToString("\n")
+                val new = if (add) tags.fold(old) { acc, g -> TagParser.addTagToComment(acc, g) }
+                          else old.split("\n").filter { line -> tags.none { g -> line.trim().lowercase() == "#$g" } }.joinToString("\n")
                 mp3.id3v2Tag.comment = new
                 mp3.save(outF.absolutePath)
                 contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
