@@ -1,19 +1,22 @@
 package com.example.tagtune2
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.widget.ArrayAdapter
+import android.widget.AutoCompleteTextView
 import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.documentfile.provider.DocumentFile
+import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
 import java.io.File
@@ -40,6 +43,7 @@ class MainActivity : Activity() {
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     private fun prefs() = getSharedPreferences("tagtune2", MODE_PRIVATE)
     private fun savedTree(): String? = prefs().getString("tree_uri", null)
+    private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,12 +85,12 @@ class MainActivity : Activity() {
         setContentView(root)
 
         if (savedTree() != null) startScan()
-        else status.text = "TagTune2: выбери папку, где лежат твои MP3.\nЗаписи разговоров и прочий мусор останутся за бортом."
+        else status.text = "TagTune2: выбери папку, где лежат твои MP3."
     }
 
     private fun pickFolder() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         startActivityForResult(i, REQ_TREE)
     }
 
@@ -95,8 +99,8 @@ class MainActivity : Activity() {
         if (requestCode == REQ_TREE && resultCode == RESULT_OK && data?.data != null) {
             val uri = data.data!!
             try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (e: Exception) { /* некоторые провайдеры не дают persist — не страшно */ }
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (e: Exception) { }
             prefs().edit().putString("tree_uri", uri.toString()).apply()
             startScan()
         }
@@ -114,7 +118,7 @@ class MainActivity : Activity() {
                 tracks = out
                 runOnUiThread {
                     rebuildChips(); rebuildList()
-                    status.text = "🎵 В папке найдено MP3: ${tracks.size}. Теги — фильтр, трек — игра."
+                    status.text = "🎵 MP3 в папке: ${tracks.size}. Тап — игра, долгое нажатие — редактор тегов."
                 }
             } catch (t: Throwable) {
                 val err = android.util.Log.getStackTraceString(t)
@@ -143,17 +147,122 @@ class MainActivity : Activity() {
         } catch (e: Exception) { }
         var tags = emptyList<String>()
         try {
-            // mp3agic умеет читать только файлы: делаем временную копию потока
             val tmp = File(cacheDir, "tagprobe.mp3")
-            contentResolver.openInputStream(f.uri)?.use { ins ->
-                FileOutputStream(tmp).use { ins.copyTo(it) }
-            }
+            contentResolver.openInputStream(f.uri)?.use { ins -> FileOutputStream(tmp).use { ins.copyTo(it) } }
             val mp3 = Mp3File(tmp.absolutePath)
             if (mp3.hasId3v2Tag()) tags = TagParser.extractTags(mp3.id3v2Tag.comment)
             tmp.delete()
         } catch (e: Exception) { }
         return Track(f.uri.toString(), title, artist, tags)
     }
+
+    /* ---------- РЕДАКТОР ТЕГОВ: запись в COMMENT ---------- */
+
+    private fun openEditor(t: Track) {
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(16), dp(8), dp(16), 0)
+
+        val info = TextView(this)
+        info.text = "Теги трека. Тап по тегу — убрать его строку из COMMENT."
+        box.addView(info)
+
+        val scroll = HorizontalScrollView(this)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        scroll.addView(row)
+        box.addView(scroll)
+
+        val input = AutoCompleteTextView(this)
+        input.hint = "тег… (подсказки из библиотеки)"
+        input.threshold = 1
+        box.addView(input)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(t.title)
+            .setView(box)
+            .setPositiveButton("＋ Добавить", null)
+            .setNegativeButton("Закрыть", null)
+            .create()
+
+        fun refresh() {
+            val cur = tracks.find { it.uri == t.uri } ?: t
+            row.removeAllViews()
+            if (cur.tags.isEmpty()) {
+                val none = TextView(this); none.text = "тегов нет"; row.addView(none)
+            }
+            for (g in cur.tags) {
+                val chip = TextView(this)
+                chip.text = "#$g ✕"
+                chip.setPadding(dp(12), dp(8), dp(12), dp(8))
+                val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                lp.setMargins(0, 0, dp(8), 0)
+                chip.layoutParams = lp
+                chip.setBackgroundColor(Color.parseColor("#3A2A5A"))
+                chip.setTextColor(Color.WHITE)
+                chip.setOnClickListener {
+                    info.text = "Убираю #$g…"
+                    writeTag(t, g, false) { ok, msg ->
+                        info.text = if (ok) "Готово: #$g убран." else msg
+                        refresh(); rebuildChips(); rebuildList()
+                    }
+                }
+                row.addView(chip)
+            }
+            input.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, allTags()))
+        }
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val v = input.text.toString().trim().removePrefix("#").lowercase()
+                if (v.isEmpty()) return@setOnClickListener
+                info.text = "Записываю #$v в COMMENT…"
+                writeTag(t, v, true) { ok, msg ->
+                    info.text = if (ok) "Готово: #$v записан с новой строки." else msg
+                    if (ok) input.setText("")
+                    refresh(); rebuildChips(); rebuildList()
+                }
+            }
+        }
+        dialog.show()
+        refresh()
+    }
+
+    private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) {
+        Thread {
+            var ok = false
+            var msg = "ок"
+            var newTags: List<String>? = null
+            try {
+                val uri = Uri.parse(t.uri)
+                val inF = File(cacheDir, "edit_in.mp3")
+                val outF = File(cacheDir, "edit_out.mp3")
+                contentResolver.openInputStream(uri)!!.use { ins -> FileOutputStream(inF).use { ins.copyTo(it) } }
+                val mp3 = Mp3File(inF.absolutePath)
+                if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
+                val old = mp3.id3v2Tag.comment ?: ""
+                val new = if (add) TagParser.addTagToComment(old, tag)
+                          else old.split("\n").filter { it.trim().lowercase() != "#$tag" }.joinToString("\n")
+                mp3.id3v2Tag.comment = new
+                mp3.save(outF.absolutePath)
+                contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
+                newTags = TagParser.extractTags(new)
+                inF.delete(); outF.delete()
+                ok = true
+            } catch (e: Exception) {
+                msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — нажми «📁 Папка» и выбери папку заново (нужно право записи)."
+            }
+            runOnUiThread {
+                if (ok && newTags != null) {
+                    val nt = newTags!!
+                    tracks = tracks.map { if (it.uri == t.uri) it.copy(tags = nt) else it }
+                }
+                cb(ok, msg)
+            }
+        }.start()
+    }
+
+    /* ---------- список и фильтры ---------- */
 
     private fun rebuildChips() {
         chipsRow.removeAllViews()
@@ -183,7 +292,7 @@ class MainActivity : Activity() {
         listBox.removeAllViews()
         if (shown.isEmpty()) {
             val empty = TextView(this)
-            empty.text = if (tracks.isEmpty()) "В выбранной папке нет MP3. Подложи файлы с тегами и нажми «📁 Папка» → выбери её снова (или перезапусти)."
+            empty.text = if (tracks.isEmpty()) "В выбранной папке нет MP3."
                          else "Пересечение пусто: ни один трек не несёт все выбранные теги. Сними тег."
             empty.setPadding(0, dp(16), 0, 0)
             listBox.addView(empty)
@@ -200,9 +309,12 @@ class MainActivity : Activity() {
             lp.setMargins(0, 0, 0, dp(8))
             row.layoutParams = lp
             row.setOnClickListener { play(t) }
+            row.setOnLongClickListener { openEditor(t); true }
             listBox.addView(row)
         }
     }
+
+    /* ---------- плеер ---------- */
 
     private fun play(t: Track) {
         current = t
