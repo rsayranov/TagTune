@@ -3,6 +3,7 @@
 
     <!-- Разрешения для работы с музыкой -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+       <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
