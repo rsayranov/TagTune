@@ -25,9 +25,9 @@ android {
 }
 
 dependencies {
-    // AndroidX Core KTX - именно здесь живут ContextCompat и ActivityCompat!
+    // Инструменты AndroidX (ContextCompat, ActivityCompat для разрешений)
     implementation("androidx.core:core-ktx:1.12.0")
-    
-    // Наша надежная библиотека для MP3-тегов
+
+    // Библиотека чтения/записи ID3-тегов в MP3 (наше поле COMMENT)
     implementation("com.mpatric:mp3agic:0.9.1")
 }
