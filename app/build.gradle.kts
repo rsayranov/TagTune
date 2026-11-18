@@ -25,6 +25,6 @@ android {
 }
 
 dependencies {
-    // Наша библиотека для тегов теперь на своем месте!
-    implementation("com.github.AdrienPoupa:jaudiotagger:2.3.15")
+    // Наша новая, надежная и быстрая библиотека для MP3-тегов!
+    implementation("com.mpatric:mp3agic:0.9.1")
 }
