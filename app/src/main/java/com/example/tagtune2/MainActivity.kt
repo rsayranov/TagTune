@@ -1,33 +1,35 @@
 package com.example.tagtune2
 
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
 import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : Activity() {
 
-    private val REQ = 101
+    private val REQ_TREE = 202
     private lateinit var status: TextView
+    private lateinit var pickBtn: Button
     private lateinit var chipsRow: LinearLayout
     private lateinit var nowText: TextView
     private lateinit var playBtn: Button
     private lateinit var listBox: LinearLayout
 
-    data class Track(val path: String, val title: String, val artist: String, val tags: List<String>)
+    data class Track(val uri: String, val title: String, val artist: String, val tags: List<String>)
 
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
@@ -36,6 +38,8 @@ class MainActivity : Activity() {
     private var current: Track? = null
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
+    private fun prefs() = getSharedPreferences("tagtune2", MODE_PRIVATE)
+    private fun savedTree(): String? = prefs().getString("tree_uri", null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,8 +48,13 @@ class MainActivity : Activity() {
         root.setPadding(dp(14), dp(14), dp(14), dp(14))
 
         status = TextView(this)
-        status.text = "TagTune2: запускаюсь..."
+        status.text = "TagTune2: привет!"
         root.addView(status)
+
+        pickBtn = Button(this)
+        pickBtn.text = "📁 Выбрать папку с музыкой"
+        pickBtn.setOnClickListener { pickFolder() }
+        root.addView(pickBtn)
 
         val chipScroll = HorizontalScrollView(this)
         chipsRow = LinearLayout(this)
@@ -54,7 +63,7 @@ class MainActivity : Activity() {
         root.addView(chipScroll)
 
         nowText = TextView(this)
-        nowText.text = "Ничего не играет. Нажми на трек ниже."
+        nowText.text = "Ничего не играет."
         nowText.setPadding(0, dp(10), 0, dp(6))
         root.addView(nowText)
 
@@ -70,77 +79,80 @@ class MainActivity : Activity() {
         root.addView(listScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
-        checkPermissionAndScan()
+
+        if (savedTree() != null) startScan()
+        else status.text = "TagTune2: выбери папку, где лежат твои MP3.\nЗаписи разговоров и прочий мусор останутся за бортом."
     }
 
-    private fun neededPermission(): String =
-        if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_AUDIO
-        else android.Manifest.permission.READ_EXTERNAL_STORAGE
+    private fun pickFolder() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        startActivityForResult(i, REQ_TREE)
+    }
 
-    private fun checkPermissionAndScan() {
-        if (ContextCompat.checkSelfPermission(this, neededPermission()) == PackageManager.PERMISSION_GRANTED) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_TREE && resultCode == RESULT_OK && data?.data != null) {
+            val uri = data.data!!
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (e: Exception) { /* некоторые провайдеры не дают persist — не страшно */ }
+            prefs().edit().putString("tree_uri", uri.toString()).apply()
             startScan()
-        } else {
-            status.text = "TagTune2: жду разрешение на чтение музыки..."
-            ActivityCompat.requestPermissions(this, arrayOf(neededPermission()), REQ)
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startScan()
-            else status.text = "Разрешение не дано. Дай его в настройках приложения и перезапусти."
         }
     }
 
     private fun startScan() {
-        status.text = "TagTune2: сканирую музыку..."
+        status.text = "TagTune2: сканирую выбранную папку..."
         Thread {
-            val report = StringBuilder()
             try {
-                tracks = scanLibrary()
+                val tree = DocumentFile.fromTreeUri(this, Uri.parse(savedTree()!!))
+                val files = mutableListOf<DocumentFile>()
+                walk(tree, files, 0)
+                val out = mutableListOf<Track>()
+                for (f in files.take(300)) out.add(readTrack(f))
+                tracks = out
                 runOnUiThread {
-                    rebuildChips()
-                    rebuildList()
-                    status.text = "🎵 Найдено треков: ${tracks.size}. Нажми на тег — фильтр, на трек — игра."
+                    rebuildChips(); rebuildList()
+                    status.text = "🎵 В папке найдено MP3: ${tracks.size}. Теги — фильтр, трек — игра."
                 }
             } catch (t: Throwable) {
-                report.append("ОЙ! Споткнулись о камень:\n\n").append(android.util.Log.getStackTraceString(t))
-                runOnUiThread { status.text = report.toString() }
+                val err = android.util.Log.getStackTraceString(t)
+                runOnUiThread { status.text = "ОЙ! Споткнулись о камень:\n\n$err" }
             }
         }.start()
     }
 
-    private fun scanLibrary(): List<Track> {
-        val out = mutableListOf<Track>()
-        val projection = arrayOf(
-            MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST
-        )
-        contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, null, null,
-            MediaStore.Audio.Media.DATE_ADDED + " DESC"
-        )?.use { cursor ->
-            val dC = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
-            val tC = cursor.getColumnIndex(MediaStore.Audio.Media.TITLE)
-            val aC = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST)
-            while (cursor.moveToNext() && out.size < 200) {
-                val path = if (dC >= 0) cursor.getString(dC) else null
-                val title = (if (tC >= 0) cursor.getString(tC) else null) ?: "Неизвестный трек"
-                val artist = (if (aC >= 0) cursor.getString(aC) else null) ?: "Неизвестный исполнитель"
-                var tags = emptyList<String>()
-                if (path != null && path.endsWith(".mp3", true) && File(path).exists()) {
-                    tags = try {
-                        val mp3 = Mp3File(path)
-                        if (mp3.hasId3v2Tag()) TagParser.extractTags(mp3.id3v2Tag.comment) else emptyList()
-                    } catch (t: Throwable) { emptyList() }
-                }
-                out.add(Track(path ?: "", title, artist, tags))
-            }
+    private fun walk(dir: DocumentFile?, out: MutableList<DocumentFile>, depth: Int) {
+        if (dir == null || depth > 6 || out.size > 300) return
+        for (f in dir.listFiles()) {
+            if (f.isDirectory) walk(f, out, depth + 1)
+            else if (f.name?.endsWith(".mp3", true) == true) out.add(f)
         }
-        return out
+    }
+
+    private fun readTrack(f: DocumentFile): Track {
+        var title = f.name?.removeSuffix(".mp3") ?: "Без названия"
+        var artist = "Неизвестный исполнитель"
+        try {
+            val mmr = MediaMetadataRetriever()
+            mmr.setDataSource(this, f.uri)
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { title = it }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
+            mmr.release()
+        } catch (e: Exception) { }
+        var tags = emptyList<String>()
+        try {
+            // mp3agic умеет читать только файлы: делаем временную копию потока
+            val tmp = File(cacheDir, "tagprobe.mp3")
+            contentResolver.openInputStream(f.uri)?.use { ins ->
+                FileOutputStream(tmp).use { ins.copyTo(it) }
+            }
+            val mp3 = Mp3File(tmp.absolutePath)
+            if (mp3.hasId3v2Tag()) tags = TagParser.extractTags(mp3.id3v2Tag.comment)
+            tmp.delete()
+        } catch (e: Exception) { }
+        return Track(f.uri.toString(), title, artist, tags)
     }
 
     private fun rebuildChips() {
@@ -166,13 +178,12 @@ class MainActivity : Activity() {
     }
 
     private fun rebuildList() {
-        // Логика И: трек попадает в список, только если несёт ВСЕ выбранные теги
         val filtered = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
-        shown = filtered.shuffled() // по ТЗ: случайный порядок по умолчанию
+        shown = filtered.shuffled()
         listBox.removeAllViews()
         if (shown.isEmpty()) {
             val empty = TextView(this)
-            empty.text = if (tracks.isEmpty()) "Музыка не найдена. Закинь MP3 в память телефона!"
+            empty.text = if (tracks.isEmpty()) "В выбранной папке нет MP3. Подложи файлы с тегами и нажми «📁 Папка» → выбери её снова (или перезапусти)."
                          else "Пересечение пусто: ни один трек не несёт все выбранные теги. Сними тег."
             empty.setPadding(0, dp(16), 0, 0)
             listBox.addView(empty)
@@ -183,7 +194,7 @@ class MainActivity : Activity() {
             row.text = "🎵 ${t.title}\n👤 ${t.artist}\n🏷 " +
                 (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
             row.setPadding(dp(12), dp(10), dp(12), dp(10))
-            row.setBackgroundColor(if (current?.path == t.path) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
+            row.setBackgroundColor(if (current?.uri == t.uri) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
             row.setTextColor(Color.parseColor("#EEEEF5"))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, 0, dp(8))
@@ -194,13 +205,12 @@ class MainActivity : Activity() {
     }
 
     private fun play(t: Track) {
-        if (t.path.isEmpty()) { nowText.text = "У трека нет пути к файлу."; return }
         current = t
         nowText.text = "▶ Играет: ${t.title} — ${t.artist}"
         try {
             player?.release()
             player = MediaPlayer().apply {
-                setDataSource(t.path)
+                setDataSource(this@MainActivity, Uri.parse(t.uri))
                 setOnCompletionListener { next() }
                 prepare()
                 start()
@@ -221,7 +231,7 @@ class MainActivity : Activity() {
 
     private fun next() {
         if (shown.isEmpty()) return
-        val i = shown.indexOfFirst { it.path == current?.path }
+        val i = shown.indexOfFirst { it.uri == current?.uri }
         play(shown[(i + 1) % shown.size])
     }
 
