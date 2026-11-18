@@ -17,6 +17,12 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Keep debug keystore (одна подпись для всех сборок)
+      uses: actions/cache@v4
+      with:
+        path: ~/.android/debug.keystore
+        key: tagtune2-debug-keystore-v1
+
     - name: Setup Gradle 8.7
       uses: gradle/actions/setup-gradle@v3
       with:
