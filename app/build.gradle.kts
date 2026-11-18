@@ -25,5 +25,6 @@ android {
 }
 
 dependencies {
-    // Здесь мы потом добавим библиотеку для чтения тегов
+    // Наша библиотека для тегов теперь на своем месте!
+    implementation("com.github.AdrienPoupa:jaudiotagger:2.3.15")
 }
