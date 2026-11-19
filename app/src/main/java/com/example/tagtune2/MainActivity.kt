@@ -52,7 +52,8 @@ class MainActivity : Activity() {
     data class Track(
         val uri: String, val title: String, val artist: String,
         val tags: List<String>, val coverPath: String? = null,
-        val album: String = "Неизвестный альбом", val genre: String = ""
+        val album: String = "Неизвестный альбом", val genre: String = "",
+        val durationMs: Long = 0
     )
 
     private var tracks = listOf<Track>()
@@ -354,6 +355,7 @@ class MainActivity : Activity() {
         var artist = "Неизвестный исполнитель"
         var album = "Неизвестный альбом"
         var genre = ""
+        var durationMs = 0L
         try {
             val mmr = MediaMetadataRetriever()
             mmr.setDataSource(this, f.uri)
@@ -361,6 +363,7 @@ class MainActivity : Activity() {
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { album = it }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { genre = it }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
             mmr.release()
         } catch (e: Exception) { }
         var tags = emptyList<String>()
@@ -380,10 +383,10 @@ class MainActivity : Activity() {
             }
             tmp.delete()
         } catch (e: Exception) { }
-        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs)
     }
 
-    /* ---------- контент медиатеки: меню списком ---------- */
+    /* ---------- контент медиатеки ---------- */
 
     private fun rebuildContent() {
         contentBox.removeAllViews()
@@ -398,32 +401,72 @@ class MainActivity : Activity() {
             "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addGroups(tracks.groupBy { it.artist }, "artist", "👤")
             "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addGroups(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre", "🎼")
             "tags" -> addTagList()
+            "untagged" -> { shown = tracks.filter { it.tags.isEmpty() }.sortedBy { it.title }; addTrackRows(shown, "Без тегов") }
         }
         highlightCurrent()
     }
 
     private fun addMenuRows() {
         shown = emptyList()
+        val totalMin = tracks.sumOf { it.durationMs } / 60000
+        val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
+        val untagged = tracks.count { it.tags.isEmpty() }
+        val tagCount = tracks.flatMap { it.tags }.distinct().size
+
         val items = listOf(
-            "tracks" to "🎵 Треки  (${tracks.size})",
-            "albums" to "💿 Альбомы  (${tracks.map { it.album }.distinct().size})",
-            "artists" to "👤 Исполнители  (${tracks.map { it.artist }.distinct().size})",
-            "genres" to "🎼 Жанры  (${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size})",
-            "tags" to "🏷 Теги  (${tracks.flatMap { it.tags }.distinct().size})"
+            Triple("tracks", "🎵 Треки", "${tracks.size} треков · $durStr"),
+            Triple("albums", "💿 Альбомы", "${tracks.map { it.album }.distinct().size} альбомов"),
+            Triple("artists", "👤 Исполнители", "${tracks.map { it.artist }.distinct().size} исполнителей"),
+            Triple("genres", "🎼 Жанры", "${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size} жанров"),
+            Triple("tags", "🏷 Теги", "$tagCount тегов" + (if (selected.isNotEmpty()) " · выбрано: ${selected.size}" else ""))
         )
-        for ((key, label) in items) {
-            val row = TextView(this)
-            row.text = label
-            row.textSize = 17f
-            row.setPadding(dp(14), dp(16), dp(14), dp(16))
+        for ((key, title, sub) in items) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.VERTICAL
+            row.setPadding(dp(16), dp(18), dp(16), dp(18))
             row.setBackgroundColor(Color.parseColor("#1E1E2A"))
-            row.setTextColor(Color.parseColor("#EEEEF5"))
+            val t1 = TextView(this); t1.text = title
+            t1.textSize = 19f; t1.setTextColor(Color.parseColor("#EEEEF5"))
+            val t2 = TextView(this); t2.text = sub
+            t2.setTextColor(Color.parseColor("#BBBBCC"))
+            t2.setPadding(0, dp(4), 0, 0)
+            row.addView(t1); row.addView(t2)
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            lp.setMargins(0, 0, 0, dp(10)); row.layoutParams = lp
             row.tag = "header"
             row.setOnClickListener { currentTab = key; subType = null; subValue = null; rebuildContent() }
             contentBox.addView(row)
         }
+
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.setPadding(dp(16), dp(14), dp(16), dp(14))
+        card.setBackgroundColor(Color.parseColor("#241638"))
+        if (untagged > 0) {
+            val c1 = TextView(this); c1.text = "🧹 Без тегов: $untagged"
+            c1.textSize = 17f; c1.setTextColor(Color.parseColor("#EEEEF5"))
+            val c2 = TextView(this); c2.text = "Навести порядок: повесить хештеги, чтобы треки попадали в плейлисты"
+            c2.setTextColor(Color.parseColor("#BBBBCC"))
+            c2.setPadding(0, dp(4), 0, 0)
+            card.addView(c1); card.addView(c2)
+            card.tag = "header"
+            card.setOnClickListener { currentTab = "untagged"; subType = null; subValue = null; rebuildContent() }
+        } else {
+            val c1 = TextView(this); c1.text = "✨ Все треки размечены!"
+            c1.textSize = 17f; c1.setTextColor(Color.parseColor("#EEEEF5"))
+            card.addView(c1)
+        }
+        val clp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        clp.setMargins(0, 0, 0, dp(10)); card.layoutParams = clp
+        contentBox.addView(card)
+
+        val passport = TextView(this)
+        passport.text = "Всего: ${tracks.size} треков · $durStr · папок: ${trees.size} · тегов: $tagCount"
+        passport.textSize = 12f
+        passport.setTextColor(Color.parseColor("#8D81A3"))
+        passport.setPadding(dp(4), dp(6), dp(4), 0)
+        passport.tag = "header"
+        contentBox.addView(passport)
     }
 
     private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
@@ -453,7 +496,6 @@ class MainActivity : Activity() {
             emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
             return
         }
-        // Алфавитный список тегов, без всяких облаков
         for (tag in counts.keys.sorted()) {
             val row = TextView(this)
             row.text = "#$tag  (${counts[tag]})"
@@ -524,7 +566,7 @@ class MainActivity : Activity() {
 
         val txt = TextView(this)
         txt.text = "🎵 ${t.title}\n👤 ${t.artist} · 💿 ${t.album}\n🏷 " +
-            (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
+            (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" }) + " · ⏱ ${fmt(t.durationMs)}"
         txt.setPadding(dp(10), dp(2), 0, dp(2))
         txt.setTextColor(Color.parseColor("#EEEEF5"))
         rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
