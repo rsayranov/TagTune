@@ -32,21 +32,30 @@ import java.io.FileOutputStream
 class MainActivity : Activity() {
 
     private val REQ_TREE = 202
+    private lateinit var libScreen: LinearLayout
+    private lateinit var playerScreen: LinearLayout
     private lateinit var status: TextView
     private lateinit var pickBtn: Button
     private lateinit var chipsRow: LinearLayout
+    private lateinit var listBox: LinearLayout
+    private lateinit var nbCover: ImageView
+    private lateinit var nbText: TextView
+    private lateinit var nbPlay: Button
     private lateinit var npCover: ImageView
-    private lateinit var nowText: TextView
+    private lateinit var pTitle: TextView
+    private lateinit var pArtist: TextView
+    private lateinit var pTagsRow: LinearLayout
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
-    private lateinit var playBtn: Button
-    private lateinit var listBox: LinearLayout
+    private lateinit var pPlay: Button
 
     data class Track(val uri: String, val title: String, val artist: String, val tags: List<String>, val coverPath: String? = null)
 
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
     private var shown = listOf<Track>()
+    private var bigCoverBm: Bitmap? = null
+    private var bigCoverUri: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val listener: () -> Unit = { runOnUiThread { refreshNow(); highlightCurrent() } }
     private val poll = object : Runnable {
@@ -65,6 +74,7 @@ class MainActivity : Activity() {
     private fun savedTree(): String? = prefs().getString("tree_uri", null)
     private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
+    private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
 
     private fun loadBitmap(path: String?, target: Int): Bitmap? {
         if (path == null) return null
@@ -89,49 +99,127 @@ class MainActivity : Activity() {
         }
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(14), dp(14), dp(14), dp(14))
 
-        status = TextView(this); status.text = "TagTune2: привет!"; root.addView(status)
+        /* ---------- ЭКРАН 1: МЕДИАТЕКА ---------- */
+        libScreen = LinearLayout(this)
+        libScreen.orientation = LinearLayout.VERTICAL
+        libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
+
+        status = TextView(this); status.text = "TagTune2: привет!"; libScreen.addView(status)
 
         pickBtn = Button(this); pickBtn.text = "📁 Выбрать папку с музыкой"
-        pickBtn.setOnClickListener { pickFolder() }; root.addView(pickBtn)
+        pickBtn.setOnClickListener { pickFolder() }; libScreen.addView(pickBtn)
 
         val chipScroll = HorizontalScrollView(this)
         chipsRow = LinearLayout(this); chipsRow.orientation = LinearLayout.HORIZONTAL
-        chipScroll.addView(chipsRow); root.addView(chipScroll)
+        chipScroll.addView(chipsRow); libScreen.addView(chipScroll)
+
+        val listScroll = ScrollView(this)
+        listBox = LinearLayout(this); listBox.orientation = LinearLayout.VERTICAL
+        listScroll.addView(listBox)
+        libScreen.addView(listScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val nowBar = LinearLayout(this)
+        nowBar.orientation = LinearLayout.HORIZONTAL
+        nowBar.setBackgroundColor(Color.parseColor("#241638"))
+        nowBar.setPadding(dp(8), dp(8), dp(8), dp(8))
+        nowBar.setOnClickListener { showPlayer() }
+        nbCover = ImageView(this); nbCover.scaleType = ImageView.ScaleType.CENTER_CROP
+        nbCover.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        nowBar.addView(nbCover, LinearLayout.LayoutParams(dp(46), dp(46)))
+        nbText = TextView(this); nbText.text = "Ничего не играет"
+        nbText.setTextColor(Color.parseColor("#EEEEF5")); nbText.maxLines = 2
+        nbText.setPadding(dp(10), 0, 0, 0)
+        nowBar.addView(nbText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        nbPlay = Button(this); nbPlay.text = "▶"
+        nbPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        nowBar.addView(nbPlay)
+        val nbOpen = Button(this); nbOpen.text = "⏫"
+        nbOpen.setOnClickListener { showPlayer() }
+        nowBar.addView(nbOpen)
+        libScreen.addView(nowBar)
+
+        root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
+
+        /* ---------- ЭКРАН 2: ПЛЕЕР ---------- */
+        playerScreen = LinearLayout(this)
+        playerScreen.orientation = LinearLayout.VERTICAL
+        playerScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
+        playerScreen.visibility = View.GONE
+
+        val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
+        val backBtn = Button(this); backBtn.text = "⬅ Медиатека"
+        backBtn.setOnClickListener { showLibrary() }
+        topRow.addView(backBtn)
+        playerScreen.addView(topRow)
 
         npCover = ImageView(this)
         npCover.scaleType = ImageView.ScaleType.CENTER_CROP
         npCover.setBackgroundColor(Color.parseColor("#1E1E2A"))
-        npCover.visibility = View.GONE
-        root.addView(npCover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150)))
+        playerScreen.addView(npCover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(220)))
 
-        nowText = TextView(this); nowText.text = "Ничего не играет."
-        nowText.setPadding(0, dp(10), 0, dp(6)); root.addView(nowText)
+        pTitle = TextView(this); pTitle.text = "Ничего не играет"
+        pTitle.textSize = 20f; pTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        pTitle.setPadding(0, dp(10), 0, 0)
+        playerScreen.addView(pTitle)
+        pArtist = TextView(this); pArtist.setTextColor(Color.parseColor("#BBBBCC"))
+        playerScreen.addView(pArtist)
+
+        val pTagsScroll = HorizontalScrollView(this)
+        pTagsRow = LinearLayout(this); pTagsRow.orientation = LinearLayout.HORIZONTAL
+        pTagsScroll.addView(pTagsRow); playerScreen.addView(pTagsScroll)
 
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         tCur = TextView(this); tCur.text = "0:00"
         val spacer = TextView(this)
         tDur = TextView(this); tDur.text = "0:00"
         times.addView(tCur); times.addView(spacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); times.addView(tDur)
-        root.addView(times)
+        playerScreen.addView(times)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         val prevBtn = Button(this); prevBtn.text = "⏮"; prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
-        playBtn = Button(this); playBtn.text = "▶"; playBtn.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        pPlay = Button(this); pPlay.text = "▶"; pPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
         val nextBtn = Button(this); nextBtn.text = "⏭"; nextBtn.setOnClickListener { PlayerService.cmd(this, "next") }
         val stopBtn = Button(this); stopBtn.text = "⏹"; stopBtn.setOnClickListener { PlayerService.cmd(this, "stop") }
-        transport.addView(prevBtn); transport.addView(playBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); transport.addView(nextBtn); transport.addView(stopBtn)
-        root.addView(transport)
+        transport.addView(prevBtn); transport.addView(pPlay, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); transport.addView(nextBtn); transport.addView(stopBtn)
+        playerScreen.addView(transport)
 
-        val listScroll = ScrollView(this)
-        listBox = LinearLayout(this); listBox.orientation = LinearLayout.VERTICAL
-        listScroll.addView(listBox)
-        root.addView(listScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
         setContentView(root)
         if (savedTree() != null) startScan()
         else status.text = "TagTune2: выбери папку, где лежат твои MP3."
+    }
+
+    private fun showPlayer() {
+        libScreen.visibility = View.GONE
+        playerScreen.visibility = View.VISIBLE
+        val uri = PlayerState.uri
+        if (uri != null && bigCoverUri != uri) loadBigCover(uri)
+        refreshNow()
+    }
+
+    private fun showLibrary() {
+        playerScreen.visibility = View.GONE
+        libScreen.visibility = View.VISIBLE
+    }
+
+    override fun onBackPressed() {
+        if (playerScreen.visibility == View.VISIBLE) showLibrary() else super.onBackPressed()
+    }
+
+    private fun loadBigCover(uri: String) {
+        bigCoverUri = uri
+        val path = curTrack()?.coverPath
+        Thread {
+            val bm = loadBitmap(path, 640)
+            runOnUiThread {
+                bigCoverBm = bm
+                if (bigCoverUri == uri && playerScreen.visibility == View.VISIBLE) {
+                    if (bm != null) npCover.setImageBitmap(bm) else npCover.setImageResource(0)
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
@@ -148,13 +236,35 @@ class MainActivity : Activity() {
     }
 
     private fun refreshNow() {
-        nowText.text = when {
+        val playing = PlayerState.playing
+        val label = when {
             PlayerState.error != null -> "⚠ " + PlayerState.error
-            PlayerState.uri == null -> "Ничего не играет."
-            else -> (if (PlayerState.playing) "▶ " else "⏸ ") + PlayerState.title + " — " + PlayerState.artist
+            PlayerState.uri == null -> "Ничего не играет"
+            else -> PlayerState.title + " — " + PlayerState.artist
         }
-        playBtn.text = if (PlayerState.playing) "⏸" else "▶"
-        if (PlayerState.uri == null) npCover.visibility = View.GONE
+        nbText.text = label
+        nbPlay.text = if (playing) "⏸" else "▶"
+        pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
+        pArtist.text = PlayerState.artist
+        pPlay.text = if (playing) "⏸" else "▶"
+        if (PlayerState.uri == null) { nbCover.setImageResource(0); npCover.setImageResource(0); bigCoverUri = null }
+        syncPlayerTags()
+    }
+
+    private fun syncPlayerTags() {
+        val t = curTrack()
+        pTagsRow.removeAllViews()
+        if (t == null) return
+        for (g in t.tags) {
+            val chip = TextView(this)
+            chip.text = "#$g"
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
+            chip.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            chip.setTextColor(Color.parseColor("#BBBBCC"))
+            pTagsRow.addView(chip)
+        }
     }
 
     private fun highlightCurrent() {
@@ -286,7 +396,7 @@ class MainActivity : Activity() {
                     info.text = "Убираю #$g…"
                     writeTag(t, g, false) { ok, msg ->
                         info.text = if (ok) "Готово: #$g убран." else msg
-                        refresh(); rebuildChips(); rebuildList()
+                        refresh(); rebuildChips(); rebuildList(); refreshNow()
                     }
                 }
                 row.addView(chip)
@@ -302,7 +412,7 @@ class MainActivity : Activity() {
                 writeTags(t, tags, true) { ok, msg ->
                     info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
                     if (ok) input.setText("")
-                    refresh(); rebuildChips(); rebuildList()
+                    refresh(); rebuildChips(); rebuildList(); refreshNow()
                 }
             }
         }
@@ -411,16 +521,12 @@ class MainActivity : Activity() {
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
-        npCover.visibility = View.GONE
+        bigCoverUri = null; bigCoverBm = null
         Thread {
-            val bm = loadBitmap(t.coverPath, 512)
-            runOnUiThread {
-                if (PlayerState.uri == t.uri) {
-                    if (bm != null) { npCover.setImageBitmap(bm); npCover.visibility = View.VISIBLE }
-                    else npCover.visibility = View.GONE
-                }
-            }
+            val small = loadBitmap(t.coverPath, 96)
+            runOnUiThread { nbCover.setImageBitmap(small) }
         }.start()
+        if (playerScreen.visibility == View.VISIBLE) loadBigCover(t.uri)
         highlightCurrent()
     }
 }
