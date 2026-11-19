@@ -34,10 +34,11 @@ class MainActivity : Activity() {
     private val REQ_TREE = 202
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
+    private lateinit var settingsScreen: LinearLayout
     private lateinit var status: TextView
-    private lateinit var pickBtn: Button
-    private lateinit var chipsRow: LinearLayout
-    private lateinit var listBox: LinearLayout
+    private lateinit var tabRow: LinearLayout
+    private lateinit var contentBox: LinearLayout
+    private lateinit var foldersBox: LinearLayout
     private lateinit var nbCover: ImageView
     private lateinit var nbText: TextView
     private lateinit var nbPlay: Button
@@ -49,11 +50,20 @@ class MainActivity : Activity() {
     private lateinit var tDur: TextView
     private lateinit var pPlay: Button
 
-    data class Track(val uri: String, val title: String, val artist: String, val tags: List<String>, val coverPath: String? = null)
+    data class Track(
+        val uri: String, val title: String, val artist: String,
+        val tags: List<String>, val coverPath: String? = null,
+        val album: String = "Неизвестный альбом", val genre: String = ""
+    )
 
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
     private var shown = listOf<Track>()
+    private val tabButtons = LinkedHashMap<String, Button>()
+    private var currentTab = "tracks"
+    private var subType: String? = null
+    private var subValue: String? = null
+    private var trees = mutableSetOf<String>()
     private var bigCoverBm: Bitmap? = null
     private var bigCoverUri: String? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -71,7 +81,6 @@ class MainActivity : Activity() {
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     private fun prefs() = getSharedPreferences("tagtune2", MODE_PRIVATE)
-    private fun savedTree(): String? = prefs().getString("tree_uri", null)
     private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
@@ -97,27 +106,44 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
         }
+        // Миграция со старой одиночной папки
+        val old = prefs().getString("tree_uri", null)
+        trees = prefs().getStringSet("trees", null)?.toMutableSet() ?: mutableSetOf()
+        if (old != null && trees.isEmpty()) { trees.add(old); prefs().edit().putStringSet("trees", trees).apply() }
+
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
 
-        /* ---------- ЭКРАН 1: МЕДИАТЕКА ---------- */
+        /* ---------- ЭКРАН: МЕДИАТЕКА ---------- */
         libScreen = LinearLayout(this)
         libScreen.orientation = LinearLayout.VERTICAL
         libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
 
-        status = TextView(this); status.text = "TagTune2: привет!"; libScreen.addView(status)
+        val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
+        status = TextView(this); status.text = "TagTune2"
+        status.setTextColor(Color.parseColor("#BBBBCC"))
+        topRow.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val settingsBtn = Button(this); settingsBtn.text = "⚙"
+        settingsBtn.setOnClickListener { showSettings() }
+        topRow.addView(settingsBtn)
+        libScreen.addView(topRow)
 
-        pickBtn = Button(this); pickBtn.text = "📁 Выбрать папку с музыкой"
-        pickBtn.setOnClickListener { pickFolder() }; libScreen.addView(pickBtn)
+        val tabScroll = HorizontalScrollView(this)
+        tabRow = LinearLayout(this); tabRow.orientation = LinearLayout.HORIZONTAL
+        tabScroll.addView(tabRow); libScreen.addView(tabScroll)
+        for ((key, label) in listOf("tracks" to "Треки", "albums" to "Альбомы", "artists" to "Исполнители", "genres" to "Жанры", "tags" to "Теги")) {
+            val b = Button(this); b.text = label
+            b.setOnClickListener { currentTab = key; subType = null; subValue = null; rebuildContent() }
+            tabButtons[key] = b
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(6), 0); b.layoutParams = lp
+            tabRow.addView(b)
+        }
 
-        val chipScroll = HorizontalScrollView(this)
-        chipsRow = LinearLayout(this); chipsRow.orientation = LinearLayout.HORIZONTAL
-        chipScroll.addView(chipsRow); libScreen.addView(chipScroll)
-
-        val listScroll = ScrollView(this)
-        listBox = LinearLayout(this); listBox.orientation = LinearLayout.VERTICAL
-        listScroll.addView(listBox)
-        libScreen.addView(listScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        val contentScroll = ScrollView(this)
+        contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
+        contentScroll.addView(contentBox)
+        libScreen.addView(contentScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val nowBar = LinearLayout(this)
         nowBar.orientation = LinearLayout.HORIZONTAL
@@ -141,17 +167,15 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН 2: ПЛЕЕР ---------- */
+        /* ---------- ЭКРАН: ПЛЕЕР ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
         playerScreen.visibility = View.GONE
 
-        val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
         val backBtn = Button(this); backBtn.text = "⬅ Медиатека"
         backBtn.setOnClickListener { showLibrary() }
-        topRow.addView(backBtn)
-        playerScreen.addView(topRow)
+        playerScreen.addView(backBtn)
 
         npCover = ImageView(this)
         npCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -186,93 +210,97 @@ class MainActivity : Activity() {
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
+        /* ---------- ЭКРАН: НАСТРОЙКИ ---------- */
+        settingsScreen = LinearLayout(this)
+        settingsScreen.orientation = LinearLayout.VERTICAL
+        settingsScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
+        settingsScreen.visibility = View.GONE
+
+        val sBack = Button(this); sBack.text = "⬅ Медиатека"
+        sBack.setOnClickListener { showLibrary() }
+        settingsScreen.addView(sBack)
+        val sTitle = TextView(this); sTitle.text = "⚙ Настройки"
+        sTitle.textSize = 20f; sTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        sTitle.setPadding(0, dp(8), 0, dp(8))
+        settingsScreen.addView(sTitle)
+        val sLabel = TextView(this); sLabel.text = "Папки с музыкой:"
+        sLabel.setTextColor(Color.parseColor("#BBBBCC"))
+        settingsScreen.addView(sLabel)
+        foldersBox = LinearLayout(this); foldersBox.orientation = LinearLayout.VERTICAL
+        settingsScreen.addView(foldersBox)
+        val addBtn = Button(this); addBtn.text = "＋ Добавить папку"
+        addBtn.setOnClickListener { pickFolder() }
+        settingsScreen.addView(addBtn)
+        val rescanBtn = Button(this); rescanBtn.text = "🔄 Пересканировать"
+        rescanBtn.setOnClickListener { startScan() }
+        settingsScreen.addView(rescanBtn)
+
+        root.addView(settingsScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
+
         setContentView(root)
-        if (savedTree() != null) startScan()
-        else status.text = "TagTune2: выбери папку, где лежат твои MP3."
+
+        if (trees.isEmpty()) {
+            status.text = "Первый запуск: выбери папку с музыкой"
+            pickFolder()
+        } else startScan()
     }
+
+    /* ---------- навигация ---------- */
 
     private fun showPlayer() {
         libScreen.visibility = View.GONE
+        settingsScreen.visibility = View.GONE
         playerScreen.visibility = View.VISIBLE
         val uri = PlayerState.uri
         if (uri != null && bigCoverUri != uri) loadBigCover(uri)
         refreshNow()
     }
 
+    private fun showSettings() {
+        libScreen.visibility = View.GONE
+        playerScreen.visibility = View.GONE
+        settingsScreen.visibility = View.VISIBLE
+        renderFolders()
+    }
+
     private fun showLibrary() {
         playerScreen.visibility = View.GONE
+        settingsScreen.visibility = View.GONE
         libScreen.visibility = View.VISIBLE
     }
 
     override fun onBackPressed() {
-        if (playerScreen.visibility == View.VISIBLE) showLibrary() else super.onBackPressed()
+        when {
+            playerScreen.visibility == View.VISIBLE -> showLibrary()
+            settingsScreen.visibility == View.VISIBLE -> showLibrary()
+            else -> super.onBackPressed()
+        }
     }
 
-    private fun loadBigCover(uri: String) {
-        bigCoverUri = uri
-        val path = curTrack()?.coverPath
-        Thread {
-            val bm = loadBitmap(path, 640)
-            runOnUiThread {
-                bigCoverBm = bm
-                if (bigCoverUri == uri && playerScreen.visibility == View.VISIBLE) {
-                    if (bm != null) npCover.setImageBitmap(bm) else npCover.setImageResource(0)
-                }
+    private fun renderFolders() {
+        foldersBox.removeAllViews()
+        if (trees.isEmpty()) {
+            val none = TextView(this); none.text = "Папок пока нет — добавь первую."
+            none.setTextColor(Color.parseColor("#BBBBCC"))
+            foldersBox.addView(none)
+            return
+        }
+        for (u in trees) {
+            val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
+            val name = DocumentFile.fromTreeUri(this, Uri.parse(u))?.name ?: u
+            val tv = TextView(this); tv.text = "📁 $name"
+            tv.setTextColor(Color.parseColor("#EEEEF5"))
+            tv.setPadding(0, dp(6), 0, dp(6))
+            row.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val del = Button(this); del.text = "✕"
+            del.setOnClickListener {
+                trees.remove(u)
+                prefs().edit().putStringSet("trees", trees).apply()
+                try { contentResolver.releasePersistableUriPermission(Uri.parse(u), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (e: Exception) { }
+                renderFolders(); startScan()
             }
-        }.start()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        PlayerState.listeners.add(listener)
-        handler.post(poll)
-        refreshNow(); highlightCurrent()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        PlayerState.listeners.remove(listener)
-        handler.removeCallbacks(poll)
-    }
-
-    private fun refreshNow() {
-        val playing = PlayerState.playing
-        val label = when {
-            PlayerState.error != null -> "⚠ " + PlayerState.error
-            PlayerState.uri == null -> "Ничего не играет"
-            else -> PlayerState.title + " — " + PlayerState.artist
-        }
-        nbText.text = label
-        nbPlay.text = if (playing) "⏸" else "▶"
-        pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
-        pArtist.text = PlayerState.artist
-        pPlay.text = if (playing) "⏸" else "▶"
-        if (PlayerState.uri == null) { nbCover.setImageResource(0); npCover.setImageResource(0); bigCoverUri = null }
-        syncPlayerTags()
-    }
-
-    private fun syncPlayerTags() {
-        val t = curTrack()
-        pTagsRow.removeAllViews()
-        if (t == null) return
-        for (g in t.tags) {
-            val chip = TextView(this)
-            chip.text = "#$g"
-            chip.setPadding(dp(12), dp(6), dp(12), dp(6))
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
-            chip.setBackgroundColor(Color.parseColor("#2A2A3A"))
-            chip.setTextColor(Color.parseColor("#BBBBCC"))
-            pTagsRow.addView(chip)
-        }
-    }
-
-    private fun highlightCurrent() {
-        if (listBox.childCount != shown.size) return
-        for (i in shown.indices) {
-            listBox.getChildAt(i)?.setBackgroundColor(
-                if (shown[i].uri == PlayerState.uri) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A")
-            )
+            row.addView(del)
+            foldersBox.addView(row)
         }
     }
 
@@ -289,24 +317,34 @@ class MainActivity : Activity() {
             try {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             } catch (e: Exception) { }
-            prefs().edit().putString("tree_uri", uri.toString()).apply()
+            trees.add(uri.toString())
+            prefs().edit().putStringSet("trees", trees).apply()
+            if (settingsScreen.visibility == View.VISIBLE) renderFolders()
             startScan()
         }
     }
 
+    /* ---------- сканирование ---------- */
+
     private fun startScan() {
-        status.text = "TagTune2: сканирую выбранную папку..."
+        status.text = "Сканирую папки..."
         Thread {
             try {
-                val tree = DocumentFile.fromTreeUri(this, Uri.parse(savedTree()!!))
                 val files = mutableListOf<DocumentFile>()
-                walk(tree, files, 0)
+                for (u in trees) {
+                    val tree = DocumentFile.fromTreeUri(this, Uri.parse(u)) ?: continue
+                    walk(tree, files, 0)
+                }
+                val seen = mutableSetOf<String>()
                 val out = mutableListOf<Track>()
-                for (f in files.take(300)) out.add(readTrack(f))
+                for (f in files) {
+                    val key = f.uri.toString()
+                    if (seen.add(key) && out.size < 500) out.add(readTrack(f))
+                }
                 tracks = out
                 runOnUiThread {
-                    rebuildChips(); rebuildList()
-                    status.text = "🎵 MP3 в папке: ${tracks.size}. Тап — игра, долгое нажатие — редактор тегов."
+                    rebuildContent()
+                    status.text = "🎵 Треков: ${tracks.size} · папок: ${trees.size}"
                 }
             } catch (t: Throwable) {
                 val err = android.util.Log.getStackTraceString(t)
@@ -316,7 +354,7 @@ class MainActivity : Activity() {
     }
 
     private fun walk(dir: DocumentFile?, out: MutableList<DocumentFile>, depth: Int) {
-        if (dir == null || depth > 6 || out.size > 300) return
+        if (dir == null || depth > 6 || out.size > 500) return
         for (f in dir.listFiles()) {
             if (f.isDirectory) walk(f, out, depth + 1)
             else if (f.name?.endsWith(".mp3", true) == true) out.add(f)
@@ -326,11 +364,15 @@ class MainActivity : Activity() {
     private fun readTrack(f: DocumentFile): Track {
         var title = f.name?.removeSuffix(".mp3") ?: "Без названия"
         var artist = "Неизвестный исполнитель"
+        var album = "Неизвестный альбом"
+        var genre = ""
         try {
             val mmr = MediaMetadataRetriever()
             mmr.setDataSource(this, f.uri)
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { title = it }
             mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { album = it }
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { genre = it }
             mmr.release()
         } catch (e: Exception) { }
         var tags = emptyList<String>()
@@ -350,7 +392,153 @@ class MainActivity : Activity() {
             }
             tmp.delete()
         } catch (e: Exception) { }
-        return Track(f.uri.toString(), title, artist, tags, coverPath)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre)
+    }
+
+    /* ---------- контент медиатеки ---------- */
+
+    private fun rebuildContent() {
+        for ((k, b) in tabButtons) {
+            val on = k == currentTab
+            b.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
+            b.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
+        }
+        contentBox.removeAllViews()
+        when (currentTab) {
+            "tracks" -> { shown = tracks.sortedBy { it.title }; addTrackRows(shown, "Все треки") }
+            "albums" -> if (subType == "album") addTrackRows(subTracks { it.album == subValue }, "Альбом: $subValue") else addGroups(tracks.groupBy { it.album }, "album", "💿")
+            "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addGroups(tracks.groupBy { it.artist }, "artist", "👤")
+            "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addGroups(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre", "🎼")
+            "tags" -> addTagCloud()
+        }
+        highlightCurrent()
+    }
+
+    private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
+
+    private fun addGroups(groups: Map<String, List<Track>>, type: String, icon: String) {
+        shown = emptyList()
+        if (groups.isEmpty()) { emptyMsg("Пока пусто."); return }
+        for ((name, list) in groups.toSortedMap()) {
+            val row = TextView(this)
+            row.text = "$icon $name  (${list.size})"
+            row.setPadding(dp(12), dp(12), dp(12), dp(12))
+            row.setBackgroundColor(Color.parseColor("#1E1E2A"))
+            row.setTextColor(Color.parseColor("#EEEEF5"))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            row.tag = "group"
+            row.setOnClickListener { subType = type; subValue = name; rebuildContent() }
+            contentBox.addView(row)
+        }
+    }
+
+    private fun addTrackRows(list: List<Track>, header: String) {
+        shown = list
+        val h = TextView(this); h.text = header
+        h.setTextColor(Color.parseColor("#BBBBCC"))
+        h.setPadding(0, 0, 0, dp(8))
+        h.tag = "header"
+        contentBox.addView(h)
+        if (subType != null) {
+            val back = Button(this); back.text = "⬅ Ко всем разделам"
+            back.tag = "header"
+            back.setOnClickListener { subType = null; subValue = null; rebuildContent() }
+            contentBox.addView(back)
+        }
+        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
+        for (t in list) addTrackRow(t)
+    }
+
+    private fun addTagCloud() {
+        val counts = mutableMapOf<String, Int>()
+        for (t in tracks) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
+        val cloud = LinearLayout(this); cloud.orientation = LinearLayout.HORIZONTAL
+        cloud.tag = "header"
+        var line = 0
+        for ((tag, n) in counts.entries.sortedByDescending { it.value }) {
+            val chip = TextView(this)
+            chip.text = "#$tag"
+            chip.textSize = (14 + minOf(n, 6) * 2).toFloat()
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(8), dp(8)); chip.layoutParams = lp
+            val on = selected.contains(tag)
+            chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
+            chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
+            chip.tag = "header"
+            chip.setOnClickListener {
+                if (selected.contains(tag)) selected.remove(tag) else selected.add(tag)
+                rebuildContent()
+            }
+            cloud.addView(chip)
+            line++
+            if (line % 4 == 0) {
+                contentBox.addView(cloud)
+                val nl = LinearLayout(this); nl.orientation = LinearLayout.HORIZONTAL; nl.tag = "header"
+                contentBox.addView(nl)
+            }
+        }
+        if (cloud.childCount > 0) contentBox.addView(cloud)
+        if (counts.isEmpty()) emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
+        val filtered = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
+        shown = filtered.shuffled()
+        val h = TextView(this)
+        h.text = if (selected.isEmpty()) "Плейлист: все треки (${shown.size}), шафл"
+                 else "Пересечение ${selected.joinToString(" ∩ ") { "#$it" }}: ${shown.size}, шафл"
+        h.setTextColor(Color.parseColor("#BBBBCC"))
+        h.setPadding(0, dp(8), 0, dp(8))
+        h.tag = "header"
+        contentBox.addView(h)
+        for (t in shown) addTrackRow(t)
+        if (shown.isEmpty()) emptyMsg("Пересечение пусто: сними часть тегов.")
+    }
+
+    private fun emptyMsg(msg: String) {
+        val empty = TextView(this)
+        empty.text = msg
+        empty.setPadding(0, dp(16), 0, 0)
+        empty.tag = "header"
+        contentBox.addView(empty)
+    }
+
+    private fun addTrackRow(t: Track) {
+        val rowL = LinearLayout(this)
+        rowL.orientation = LinearLayout.HORIZONTAL
+        rowL.setPadding(dp(10), dp(8), dp(10), dp(8))
+        rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        rowL.tag = "track:" + t.uri
+
+        val iv = ImageView(this)
+        iv.scaleType = ImageView.ScaleType.CENTER_CROP
+        iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        val bm = loadBitmap(t.coverPath, 96)
+        if (bm != null) iv.setImageBitmap(bm)
+        rowL.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
+
+        val txt = TextView(this)
+        txt.text = "🎵 ${t.title}\n👤 ${t.artist} · 💿 ${t.album}\n🏷 " +
+            (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
+        txt.setPadding(dp(10), dp(2), 0, dp(2))
+        txt.setTextColor(Color.parseColor("#EEEEF5"))
+        rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+        rowL.setOnClickListener { play(t) }
+        rowL.setOnLongClickListener { openEditor(t); true }
+        contentBox.addView(rowL)
+    }
+
+    private fun highlightCurrent() {
+        val cur = "track:" + PlayerState.uri
+        for (i in 0 until contentBox.childCount) {
+            val v = contentBox.getChildAt(i)
+            val tag = v.tag as? String ?: continue
+            if (tag.startsWith("track:")) {
+                v.setBackgroundColor(if (tag == cur) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
+            }
+        }
     }
 
     /* ---------- РЕДАКТОР ТЕГОВ ---------- */
@@ -396,7 +584,7 @@ class MainActivity : Activity() {
                     info.text = "Убираю #$g…"
                     writeTag(t, g, false) { ok, msg ->
                         info.text = if (ok) "Готово: #$g убран." else msg
-                        refresh(); rebuildChips(); rebuildList(); refreshNow()
+                        refresh(); rebuildContent(); refreshNow()
                     }
                 }
                 row.addView(chip)
@@ -412,7 +600,7 @@ class MainActivity : Activity() {
                 writeTags(t, tags, true) { ok, msg ->
                     info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
                     if (ok) input.setText("")
-                    refresh(); rebuildChips(); rebuildList(); refreshNow()
+                    refresh(); rebuildContent(); refreshNow()
                 }
             }
         }
@@ -440,7 +628,7 @@ class MainActivity : Activity() {
                 newTags = TagParser.extractTags(new)
                 inF.delete(); outF.delete(); ok = true
             } catch (e: Exception) {
-                msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — нажми «📁 Папка» и выбери папку заново (нужно право записи)."
+                msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — добавь папку заново в ⚙ Настройках (нужно право записи)."
             }
             runOnUiThread {
                 if (ok && newTags != null) {
@@ -452,71 +640,66 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    /* ---------- СПИСОК И ФИЛЬТРЫ ---------- */
+    /* ---------- плеер ---------- */
 
-    private fun rebuildChips() {
-        chipsRow.removeAllViews()
-        val counts = mutableMapOf<String, Int>()
-        for (t in tracks) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
-        for ((tag, n) in counts.entries.sortedByDescending { it.value }) {
+    private fun loadBigCover(uri: String) {
+        bigCoverUri = uri
+        val path = curTrack()?.coverPath
+        Thread {
+            val bm = loadBitmap(path, 640)
+            runOnUiThread {
+                bigCoverBm = bm
+                if (bigCoverUri == uri && playerScreen.visibility == View.VISIBLE) {
+                    if (bm != null) npCover.setImageBitmap(bm) else npCover.setImageResource(0)
+                }
+            }
+        }.start()
+    }
+
+    private fun refreshNow() {
+        val playing = PlayerState.playing
+        val label = when {
+            PlayerState.error != null -> "⚠ " + PlayerState.error
+            PlayerState.uri == null -> "Ничего не играет"
+            else -> PlayerState.title + " — " + PlayerState.artist
+        }
+        nbText.text = label
+        nbPlay.text = if (playing) "⏸" else "▶"
+        pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
+        pArtist.text = PlayerState.artist
+        pPlay.text = if (playing) "⏸" else "▶"
+        if (PlayerState.uri == null) { nbCover.setImageResource(0); npCover.setImageResource(0); bigCoverUri = null }
+        syncPlayerTags()
+    }
+
+    private fun syncPlayerTags() {
+        val t = curTrack()
+        pTagsRow.removeAllViews()
+        if (t == null) return
+        for (g in t.tags) {
             val chip = TextView(this)
-            chip.text = "#$tag ($n)"
-            chip.setPadding(dp(12), dp(8), dp(12), dp(8))
+            chip.text = "#$g"
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
-            val on = selected.contains(tag)
-            chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
-            chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
-            chip.setOnClickListener {
-                if (on) selected.remove(tag) else selected.add(tag)
-                rebuildChips(); rebuildList()
-            }
-            chipsRow.addView(chip)
+            chip.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            chip.setTextColor(Color.parseColor("#BBBBCC"))
+            pTagsRow.addView(chip)
         }
     }
 
-    private fun rebuildList() {
-        val filtered = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
-        shown = filtered.shuffled()
-        listBox.removeAllViews()
-        if (shown.isEmpty()) {
-            val empty = TextView(this)
-            empty.text = if (tracks.isEmpty()) "В выбранной папке нет MP3."
-                         else "Пересечение пусто: ни один трек не несёт все выбранные теги. Сними тег."
-            empty.setPadding(0, dp(16), 0, 0)
-            listBox.addView(empty)
-            return
-        }
-        for (t in shown) {
-            val rowL = LinearLayout(this)
-            rowL.orientation = LinearLayout.HORIZONTAL
-            rowL.setPadding(dp(10), dp(8), dp(10), dp(8))
-            rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
-
-            val iv = ImageView(this)
-            iv.scaleType = ImageView.ScaleType.CENTER_CROP
-            iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
-            val bm = loadBitmap(t.coverPath, 96)
-            if (bm != null) iv.setImageBitmap(bm)
-            rowL.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
-
-            val txt = TextView(this)
-            txt.text = "🎵 ${t.title}\n👤 ${t.artist}\n🏷 " +
-                (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
-            txt.setPadding(dp(10), dp(2), 0, dp(2))
-            txt.setTextColor(Color.parseColor("#EEEEF5"))
-            rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
-            rowL.setOnClickListener { play(t) }
-            rowL.setOnLongClickListener { openEditor(t); true }
-            listBox.addView(rowL)
-        }
-        highlightCurrent()
+    override fun onResume() {
+        super.onResume()
+        PlayerState.listeners.add(listener)
+        handler.post(poll)
+        refreshNow(); highlightCurrent()
     }
 
-    /* ---------- ПЛЕЕР: команды сервису ---------- */
+    override fun onPause() {
+        super.onPause()
+        PlayerState.listeners.remove(listener)
+        handler.removeCallbacks(poll)
+    }
 
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
