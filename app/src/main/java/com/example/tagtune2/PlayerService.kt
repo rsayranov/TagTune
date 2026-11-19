@@ -7,11 +7,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -28,6 +32,7 @@ object PlayerState {
     var artist = ""
     var playing = false
     var durationMs = 0
+    var error: String? = null
     val listeners = mutableListOf<() -> Unit>()
     fun emit() { listeners.toList().forEach { it() } }
 }
@@ -46,10 +51,13 @@ class PlayerService : Service() {
         }
     }
 
-    var player: MediaPlayer? = null
+    private var player: MediaPlayer? = null
     private var queue = listOf<QItem>()
     private var index = 0
+    private var startedAtMs = 0L
+    private var lastPlayAtMs = 0L
     private lateinit var session: MediaSessionCompat
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -92,54 +100,89 @@ class PlayerService : Service() {
 
     private fun playCurrent() {
         val item = queue.getOrNull(index) ?: return
-        player?.release()
-        player = MediaPlayer().apply {
-            setDataSource(this@PlayerService, Uri.parse(item.uri))
-            setOnPreparedListener {
-                start()
-                PlayerState.durationMs = duration
-                updateMetadata(item)
-                updateState()
-                startFg()
-                PlayerState.emit()
-            }
-            setOnCompletionListener { next() }
-            prepareAsync()
-        }
+        val now = SystemClock.uptimeMillis()
+        // Предохранитель от шквала команд: тот же трек чаще 4 раз в секунду не перезапускаем
+        if (now - lastPlayAtMs < 250 && PlayerState.uri == item.uri) return
+        lastPlayAtMs = now
+
+        player?.let { runCatching { it.release() } }
+        player = null
         PlayerState.uri = item.uri
         PlayerState.title = item.title
         PlayerState.artist = item.artist
         PlayerState.playing = true
-        updateMetadata(item)
+        PlayerState.error = null
+        updateState(); startFg(); PlayerState.emit()
+
+        Thread {
+            try {
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                mp.setDataSource(this, Uri.parse(item.uri))
+                mp.setOnCompletionListener {
+                    val played = SystemClock.uptimeMillis() - startedAtMs
+                    // Карусель-стоп: мгновенный «конец» — это ошибка, а не конец трека
+                    if (played > 1000) mainHandler.post { next() }
+                    else mainHandler.post { fail("Трек завершился мгновенно — поток пустой или недоступный. Перебор остановлен.") }
+                }
+                mp.setOnErrorListener { _, what, extra ->
+                    mainHandler.post { fail("Ошибка воспроизведения: what=$what, extra=$extra") }
+                    true
+                }
+                mp.prepare()
+                mp.start()
+                startedAtMs = SystemClock.uptimeMillis()
+                player = mp
+                PlayerState.durationMs = runCatching { mp.duration }.getOrDefault(0)
+                mainHandler.post {
+                    updateMetadata(item); updateState(); startFg(); PlayerState.emit()
+                }
+            } catch (e: Exception) {
+                mainHandler.post { fail("Не удалось открыть трек: ${e.javaClass.simpleName}: ${e.message}") }
+            }
+        }.start()
+    }
+
+    private fun fail(msg: String) {
+        PlayerState.playing = false
+        PlayerState.error = msg
+        player?.let { runCatching { it.release() } }
+        player = null
         updateState()
-        startFg()
+        stopForeground(false)
+        runCatching { NotificationManagerCompat.from(this).notify(ID, buildNotif()) }
         PlayerState.emit()
     }
 
     private fun pause() {
-        player?.pause()
+        runCatching { player?.pause() }
         PlayerState.playing = false
         updateState()
         stopForeground(false)
-        try { NotificationManagerCompat.from(this).notify(ID, buildNotif()) } catch (e: Exception) { }
+        runCatching { NotificationManagerCompat.from(this).notify(ID, buildNotif()) }
         PlayerState.emit()
     }
 
     private fun resume() {
-        player?.start()
+        if (player == null) return
+        runCatching { player?.start() }
         PlayerState.playing = true
-        updateState()
-        startFg()
-        PlayerState.emit()
+        PlayerState.error = null
+        updateState(); startFg(); PlayerState.emit()
     }
 
     private fun next() { if (queue.isNotEmpty()) { index = (index + 1) % queue.size; playCurrent() } }
     private fun prev() { if (queue.isNotEmpty()) { index = (index - 1 + queue.size) % queue.size; playCurrent() } }
-    private fun seek(ms: Int) { try { player?.seekTo(ms); updateState() } catch (e: Exception) { } }
+    private fun seek(ms: Int) { runCatching { player?.seekTo(ms) }; updateState() }
 
     private fun stopAll() {
-        player?.release(); player = null
-        PlayerState.playing = false; PlayerState.uri = null; PlayerState.durationMs = 0
+        player?.let { runCatching { it.release() } }; player = null
+        PlayerState.playing = false; PlayerState.uri = null; PlayerState.durationMs = 0; PlayerState.error = null
         session.isActive = false
         stopForeground(true)
         stopSelf()
@@ -152,26 +195,30 @@ class PlayerService : Service() {
 
     private fun updateState() {
         val st = if (PlayerState.playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
-        session.setPlaybackState(
-            PlaybackStateCompat.Builder()
-                .setActions(
-                    PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                    PlaybackStateCompat.ACTION_SEEK_TO
-                )
-                .setState(st, currentPosition().toLong(), 1f)
-                .build()
-        )
+        runCatching {
+            session.setPlaybackState(
+                PlaybackStateCompat.Builder()
+                    .setActions(
+                        PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                        PlaybackStateCompat.ACTION_SEEK_TO
+                    )
+                    .setState(st, currentPosition().toLong(), 1f)
+                    .build()
+            )
+        }
     }
 
     private fun updateMetadata(item: QItem) {
-        session.setMetadata(
-            MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, item.title)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, item.artist)
-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, (player?.duration ?: 0).toLong())
-                .build()
-        )
+        runCatching {
+            session.setMetadata(
+                MediaMetadataCompat.Builder()
+                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, item.title)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, item.artist)
+                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, PlayerState.durationMs.toLong())
+                    .build()
+            )
+        }
     }
 
     private fun pi(action: String): PendingIntent =
@@ -185,7 +232,7 @@ class PlayerService : Service() {
         NotificationCompat.Builder(this, CH)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(PlayerState.title)
-            .setContentText(PlayerState.artist)
+            .setContentText(PlayerState.error ?: PlayerState.artist)
             .setContentIntent(
                 PendingIntent.getActivity(
                     this, 0, Intent(this, MainActivity::class.java),
@@ -206,7 +253,7 @@ class PlayerService : Service() {
 
     override fun onDestroy() {
         instance = null
-        player?.release()
+        player?.let { runCatching { it.release() } }
         session.release()
         super.onDestroy()
     }
