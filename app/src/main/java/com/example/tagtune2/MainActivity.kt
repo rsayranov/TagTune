@@ -445,7 +445,6 @@ class MainActivity : Activity() {
             contentBox.addView(row)
         }
 
-        // Неразмеченные треки прямо в меню: повесил теги — трек исчез из списка
         val untagged = tracks.filter { it.tags.isEmpty() }.sortedBy { it.title }
         shown = untagged
         if (untagged.isNotEmpty()) {
@@ -487,8 +486,14 @@ class MainActivity : Activity() {
     }
 
     private fun addTagList() {
+        // Фасетная логика: базу фильтруем выбранными тегами,
+        // а показываем только те теги, что встречаются в этой базе
+        // (плюс сами выбранные — чтобы их можно было снять).
+        val base = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
         val counts = mutableMapOf<String, Int>()
-        for (t in tracks) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
+        for (t in base) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
+        for (g in selected) if (!counts.containsKey(g)) counts[g] = 0
+
         if (counts.isEmpty()) {
             shown = emptyList()
             emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
@@ -510,8 +515,7 @@ class MainActivity : Activity() {
             }
             contentBox.addView(row)
         }
-        val filtered = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
-        shown = filtered.shuffled()
+        shown = base.shuffled()
         val h = TextView(this)
         h.text = if (selected.isEmpty()) "Плейлист: все треки (${shown.size}), шафл"
                  else "Пересечение ${selected.joinToString(" ∩ ") { "#$it" }}: ${shown.size}, шафл"
