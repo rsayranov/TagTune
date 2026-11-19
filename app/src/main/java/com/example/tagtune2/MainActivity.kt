@@ -118,13 +118,18 @@ class MainActivity : Activity() {
         libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
 
         val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
-        status = TextView(this); status.text = "TagTune2"
-        status.setTextColor(Color.parseColor("#BBBBCC"))
-        topRow.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val title = TextView(this); title.text = "Медиатека"
+        title.textSize = 26f; title.setTextColor(Color.parseColor("#EEEEF5"))
+        topRow.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val settingsBtn = Button(this); settingsBtn.text = "⚙"
         settingsBtn.setOnClickListener { showSettings() }
         topRow.addView(settingsBtn)
         libScreen.addView(topRow)
+
+        status = TextView(this); status.textSize = 13f
+        status.setTextColor(Color.parseColor("#BBBBCC"))
+        status.visibility = View.GONE
+        libScreen.addView(status)
 
         val contentScroll = ScrollView(this)
         contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
@@ -226,6 +231,7 @@ class MainActivity : Activity() {
         setContentView(root)
 
         if (trees.isEmpty()) {
+            status.visibility = View.VISIBLE
             status.text = "Первый запуск: выбери папку с музыкой"
             pickFolder()
         } else startScan()
@@ -316,6 +322,7 @@ class MainActivity : Activity() {
     /* ---------- сканирование ---------- */
 
     private fun startScan() {
+        status.visibility = View.VISIBLE
         status.text = "Сканирую папки..."
         Thread {
             try {
@@ -332,12 +339,15 @@ class MainActivity : Activity() {
                 }
                 tracks = out
                 runOnUiThread {
+                    status.visibility = View.GONE
                     rebuildContent()
-                    status.text = "🎵 Треков: ${tracks.size} · папок: ${trees.size}"
                 }
             } catch (t: Throwable) {
                 val err = android.util.Log.getStackTraceString(t)
-                runOnUiThread { status.text = "ОЙ! Споткнулись о камень:\n\n$err" }
+                runOnUiThread {
+                    status.visibility = View.VISIBLE
+                    status.text = "ОЙ! Споткнулись о камень:\n\n$err"
+                }
             }
         }.start()
     }
@@ -401,16 +411,13 @@ class MainActivity : Activity() {
             "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addGroups(tracks.groupBy { it.artist }, "artist", "👤")
             "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addGroups(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre", "🎼")
             "tags" -> addTagList()
-            "untagged" -> { shown = tracks.filter { it.tags.isEmpty() }.sortedBy { it.title }; addTrackRows(shown, "Без тегов") }
         }
         highlightCurrent()
     }
 
     private fun addMenuRows() {
-        shown = emptyList()
         val totalMin = tracks.sumOf { it.durationMs } / 60000
         val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
-        val untagged = tracks.count { it.tags.isEmpty() }
         val tagCount = tracks.flatMap { it.tags }.distinct().size
 
         val items = listOf(
@@ -438,27 +445,18 @@ class MainActivity : Activity() {
             contentBox.addView(row)
         }
 
-        val card = LinearLayout(this)
-        card.orientation = LinearLayout.VERTICAL
-        card.setPadding(dp(16), dp(14), dp(16), dp(14))
-        card.setBackgroundColor(Color.parseColor("#241638"))
-        if (untagged > 0) {
-            val c1 = TextView(this); c1.text = "🧹 Без тегов: $untagged"
-            c1.textSize = 17f; c1.setTextColor(Color.parseColor("#EEEEF5"))
-            val c2 = TextView(this); c2.text = "Навести порядок: повесить хештеги, чтобы треки попадали в плейлисты"
-            c2.setTextColor(Color.parseColor("#BBBBCC"))
-            c2.setPadding(0, dp(4), 0, 0)
-            card.addView(c1); card.addView(c2)
-            card.tag = "header"
-            card.setOnClickListener { currentTab = "untagged"; subType = null; subValue = null; rebuildContent() }
-        } else {
-            val c1 = TextView(this); c1.text = "✨ Все треки размечены!"
-            c1.textSize = 17f; c1.setTextColor(Color.parseColor("#EEEEF5"))
-            card.addView(c1)
+        // Неразмеченные треки прямо в меню: повесил теги — трек исчез из списка
+        val untagged = tracks.filter { it.tags.isEmpty() }.sortedBy { it.title }
+        shown = untagged
+        if (untagged.isNotEmpty()) {
+            val h = TextView(this)
+            h.text = "🧹 Без тегов (${untagged.size}) — долгое нажатие, чтобы повесить хештеги:"
+            h.setTextColor(Color.parseColor("#BBBBCC"))
+            h.setPadding(0, dp(6), 0, dp(8))
+            h.tag = "header"
+            contentBox.addView(h)
+            for (t in untagged) addTrackRow(t)
         }
-        val clp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        clp.setMargins(0, 0, 0, dp(10)); card.layoutParams = clp
-        contentBox.addView(card)
 
         val passport = TextView(this)
         passport.text = "Всего: ${tracks.size} треков · $durStr · папок: ${trees.size} · тегов: $tagCount"
