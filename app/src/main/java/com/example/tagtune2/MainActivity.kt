@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -11,9 +13,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
@@ -31,13 +35,14 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var pickBtn: Button
     private lateinit var chipsRow: LinearLayout
+    private lateinit var npCover: ImageView
     private lateinit var nowText: TextView
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
     private lateinit var playBtn: Button
     private lateinit var listBox: LinearLayout
 
-    data class Track(val uri: String, val title: String, val artist: String, val tags: List<String>)
+    data class Track(val uri: String, val title: String, val artist: String, val tags: List<String>, val coverPath: String? = null)
 
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
@@ -61,6 +66,22 @@ class MainActivity : Activity() {
     private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
 
+    private fun loadBitmap(path: String?, target: Int): Bitmap? {
+        if (path == null) return null
+        val f = File(path)
+        if (!f.exists()) return null
+        return try {
+            val opts = BitmapFactory.Options()
+            opts.inJustDecodeBounds = true
+            BitmapFactory.decodeFile(path, opts)
+            var s = 1
+            while (opts.outWidth / (s * 2) >= target) s *= 2
+            opts.inJustDecodeBounds = false
+            opts.inSampleSize = s
+            BitmapFactory.decodeFile(path, opts)
+        } catch (e: Exception) { null }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -78,6 +99,12 @@ class MainActivity : Activity() {
         val chipScroll = HorizontalScrollView(this)
         chipsRow = LinearLayout(this); chipsRow.orientation = LinearLayout.HORIZONTAL
         chipScroll.addView(chipsRow); root.addView(chipScroll)
+
+        npCover = ImageView(this)
+        npCover.scaleType = ImageView.ScaleType.CENTER_CROP
+        npCover.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        npCover.visibility = View.GONE
+        root.addView(npCover, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150)))
 
         nowText = TextView(this); nowText.text = "Ничего не играет."
         nowText.setPadding(0, dp(10), 0, dp(6)); root.addView(nowText)
@@ -127,6 +154,7 @@ class MainActivity : Activity() {
             else -> (if (PlayerState.playing) "▶ " else "⏸ ") + PlayerState.title + " — " + PlayerState.artist
         }
         playBtn.text = if (PlayerState.playing) "⏸" else "▶"
+        if (PlayerState.uri == null) npCover.visibility = View.GONE
     }
 
     private fun highlightCurrent() {
@@ -196,14 +224,23 @@ class MainActivity : Activity() {
             mmr.release()
         } catch (e: Exception) { }
         var tags = emptyList<String>()
+        var coverPath: String? = null
         try {
             val tmp = File(cacheDir, "tagprobe.mp3")
             contentResolver.openInputStream(f.uri)?.use { ins -> FileOutputStream(tmp).use { ins.copyTo(it) } }
             val mp3 = Mp3File(tmp.absolutePath)
-            if (mp3.hasId3v2Tag()) tags = TagParser.extractTags(mp3.id3v2Tag.comment)
+            if (mp3.hasId3v2Tag()) {
+                tags = TagParser.extractTags(mp3.id3v2Tag.comment)
+                val img = mp3.id3v2Tag.albumImage
+                if (img != null && img.isNotEmpty()) {
+                    val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                    cf.writeBytes(img)
+                    coverPath = cf.absolutePath
+                }
+            }
             tmp.delete()
         } catch (e: Exception) { }
-        return Track(f.uri.toString(), title, artist, tags)
+        return Track(f.uri.toString(), title, artist, tags, coverPath)
     }
 
     /* ---------- РЕДАКТОР ТЕГОВ ---------- */
@@ -341,17 +378,30 @@ class MainActivity : Activity() {
             return
         }
         for (t in shown) {
-            val row = TextView(this)
-            row.text = "🎵 ${t.title}\n👤 ${t.artist}\n🏷 " +
+            val rowL = LinearLayout(this)
+            rowL.orientation = LinearLayout.HORIZONTAL
+            rowL.setPadding(dp(10), dp(8), dp(10), dp(8))
+            rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+
+            val iv = ImageView(this)
+            iv.scaleType = ImageView.ScaleType.CENTER_CROP
+            iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            val bm = loadBitmap(t.coverPath, 96)
+            if (bm != null) iv.setImageBitmap(bm)
+            rowL.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
+
+            val txt = TextView(this)
+            txt.text = "🎵 ${t.title}\n👤 ${t.artist}\n🏷 " +
                 (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" })
-            row.setPadding(dp(12), dp(10), dp(12), dp(10))
-            row.setBackgroundColor(Color.parseColor("#1E1E2A"))
-            row.setTextColor(Color.parseColor("#EEEEF5"))
+            txt.setPadding(dp(10), dp(2), 0, dp(2))
+            txt.setTextColor(Color.parseColor("#EEEEF5"))
+            rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
-            row.setOnClickListener { play(t) }
-            row.setOnLongClickListener { openEditor(t); true }
-            listBox.addView(row)
+            lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+            rowL.setOnClickListener { play(t) }
+            rowL.setOnLongClickListener { openEditor(t); true }
+            listBox.addView(rowL)
         }
         highlightCurrent()
     }
@@ -361,6 +411,16 @@ class MainActivity : Activity() {
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
+        npCover.visibility = View.GONE
+        Thread {
+            val bm = loadBitmap(t.coverPath, 512)
+            runOnUiThread {
+                if (PlayerState.uri == t.uri) {
+                    if (bm != null) { npCover.setImageBitmap(bm); npCover.visibility = View.VISIBLE }
+                    else npCover.visibility = View.GONE
+                }
+            }
+        }.start()
         highlightCurrent()
     }
 }
