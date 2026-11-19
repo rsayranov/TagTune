@@ -32,7 +32,6 @@ class MainActivity : Activity() {
     private lateinit var pickBtn: Button
     private lateinit var chipsRow: LinearLayout
     private lateinit var nowText: TextView
-    private lateinit var wave: WaveformView
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
     private lateinit var playBtn: Button
@@ -50,7 +49,6 @@ class MainActivity : Activity() {
             val p = PlayerService.instance
             if (p != null && PlayerState.uri != null) {
                 val pos = p.currentPosition(); val dur = PlayerState.durationMs
-                wave.setProgress(if (dur > 0) pos.toFloat() / dur else 0f)
                 tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
             }
             handler.postDelayed(this, 400)
@@ -84,10 +82,6 @@ class MainActivity : Activity() {
         nowText = TextView(this); nowText.text = "Ничего не играет."
         nowText.setPadding(0, dp(10), 0, dp(6)); root.addView(nowText)
 
-        wave = WaveformView(this)
-        wave.onSeek = { f -> val d = PlayerState.durationMs; if (d > 0) PlayerService.cmd(this, "seek", seekMs = (f * d).toInt()) }
-        root.addView(wave, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(72)))
-
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         tCur = TextView(this); tCur.text = "0:00"
         val spacer = TextView(this)
@@ -99,7 +93,7 @@ class MainActivity : Activity() {
         val prevBtn = Button(this); prevBtn.text = "⏮"; prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
         playBtn = Button(this); playBtn.text = "▶"; playBtn.setOnClickListener { PlayerService.cmd(this, "toggle") }
         val nextBtn = Button(this); nextBtn.text = "⏭"; nextBtn.setOnClickListener { PlayerService.cmd(this, "next") }
-        val stopBtn = Button(this); stopBtn.text = "⏹"; stopBtn.setOnClickListener { PlayerService.cmd(this, "stop"); wave.setPeaks(null) }
+        val stopBtn = Button(this); stopBtn.text = "⏹"; stopBtn.setOnClickListener { PlayerService.cmd(this, "stop") }
         transport.addView(prevBtn); transport.addView(playBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); transport.addView(nextBtn); transport.addView(stopBtn)
         root.addView(transport)
 
@@ -364,11 +358,6 @@ class MainActivity : Activity() {
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
-        wave.setPeaks(null)
-        Thread {
-            val p = WaveformView.getPeaks(this, t.uri)
-            runOnUiThread { if (PlayerState.uri == t.uri) wave.setPeaks(p) }
-        }.start()
         highlightCurrent()
     }
 }
