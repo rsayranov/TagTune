@@ -36,7 +36,6 @@ class MainActivity : Activity() {
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
     private lateinit var status: TextView
-    private lateinit var tabRow: LinearLayout
     private lateinit var contentBox: LinearLayout
     private lateinit var foldersBox: LinearLayout
     private lateinit var nbCover: ImageView
@@ -59,8 +58,7 @@ class MainActivity : Activity() {
     private var tracks = listOf<Track>()
     private val selected = mutableSetOf<String>()
     private var shown = listOf<Track>()
-    private val tabButtons = LinkedHashMap<String, Button>()
-    private var currentTab = "tracks"
+    private var currentTab = "menu"
     private var subType: String? = null
     private var subValue: String? = null
     private var trees = mutableSetOf<String>()
@@ -106,7 +104,6 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
         }
-        // Миграция со старой одиночной папки
         val old = prefs().getString("tree_uri", null)
         trees = prefs().getStringSet("trees", null)?.toMutableSet() ?: mutableSetOf()
         if (old != null && trees.isEmpty()) { trees.add(old); prefs().edit().putStringSet("trees", trees).apply() }
@@ -127,18 +124,6 @@ class MainActivity : Activity() {
         settingsBtn.setOnClickListener { showSettings() }
         topRow.addView(settingsBtn)
         libScreen.addView(topRow)
-
-        val tabScroll = HorizontalScrollView(this)
-        tabRow = LinearLayout(this); tabRow.orientation = LinearLayout.HORIZONTAL
-        tabScroll.addView(tabRow); libScreen.addView(tabScroll)
-        for ((key, label) in listOf("tracks" to "Треки", "albums" to "Альбомы", "artists" to "Исполнители", "genres" to "Жанры", "tags" to "Теги")) {
-            val b = Button(this); b.text = label
-            b.setOnClickListener { currentTab = key; subType = null; subValue = null; rebuildContent() }
-            tabButtons[key] = b
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, dp(6), 0); b.layoutParams = lp
-            tabRow.addView(b)
-        }
 
         val contentScroll = ScrollView(this)
         contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
@@ -273,6 +258,9 @@ class MainActivity : Activity() {
         when {
             playerScreen.visibility == View.VISIBLE -> showLibrary()
             settingsScreen.visibility == View.VISIBLE -> showLibrary()
+            libScreen.visibility == View.VISIBLE && currentTab != "menu" -> {
+                currentTab = "menu"; subType = null; subValue = null; rebuildContent()
+            }
             else -> super.onBackPressed()
         }
     }
@@ -395,23 +383,47 @@ class MainActivity : Activity() {
         return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre)
     }
 
-    /* ---------- контент медиатеки ---------- */
+    /* ---------- контент медиатеки: меню списком ---------- */
 
     private fun rebuildContent() {
-        for ((k, b) in tabButtons) {
-            val on = k == currentTab
-            b.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
-            b.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
-        }
         contentBox.removeAllViews()
+        if (currentTab == "menu") { addMenuRows(); highlightCurrent(); return }
+        val back = Button(this); back.text = "⬅ Меню"
+        back.tag = "header"
+        back.setOnClickListener { currentTab = "menu"; subType = null; subValue = null; rebuildContent() }
+        contentBox.addView(back)
         when (currentTab) {
             "tracks" -> { shown = tracks.sortedBy { it.title }; addTrackRows(shown, "Все треки") }
             "albums" -> if (subType == "album") addTrackRows(subTracks { it.album == subValue }, "Альбом: $subValue") else addGroups(tracks.groupBy { it.album }, "album", "💿")
             "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addGroups(tracks.groupBy { it.artist }, "artist", "👤")
             "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addGroups(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre", "🎼")
-            "tags" -> addTagCloud()
+            "tags" -> addTagList()
         }
         highlightCurrent()
+    }
+
+    private fun addMenuRows() {
+        shown = emptyList()
+        val items = listOf(
+            "tracks" to "🎵 Треки  (${tracks.size})",
+            "albums" to "💿 Альбомы  (${tracks.map { it.album }.distinct().size})",
+            "artists" to "👤 Исполнители  (${tracks.map { it.artist }.distinct().size})",
+            "genres" to "🎼 Жанры  (${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size})",
+            "tags" to "🏷 Теги  (${tracks.flatMap { it.tags }.distinct().size})"
+        )
+        for ((key, label) in items) {
+            val row = TextView(this)
+            row.text = label
+            row.textSize = 17f
+            row.setPadding(dp(14), dp(16), dp(14), dp(16))
+            row.setBackgroundColor(Color.parseColor("#1E1E2A"))
+            row.setTextColor(Color.parseColor("#EEEEF5"))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            row.tag = "header"
+            row.setOnClickListener { currentTab = key; subType = null; subValue = null; rebuildContent() }
+            contentBox.addView(row)
+        }
     }
 
     private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
@@ -433,54 +445,31 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addTrackRows(list: List<Track>, header: String) {
-        shown = list
-        val h = TextView(this); h.text = header
-        h.setTextColor(Color.parseColor("#BBBBCC"))
-        h.setPadding(0, 0, 0, dp(8))
-        h.tag = "header"
-        contentBox.addView(h)
-        if (subType != null) {
-            val back = Button(this); back.text = "⬅ Ко всем разделам"
-            back.tag = "header"
-            back.setOnClickListener { subType = null; subValue = null; rebuildContent() }
-            contentBox.addView(back)
-        }
-        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
-        for (t in list) addTrackRow(t)
-    }
-
-    private fun addTagCloud() {
+    private fun addTagList() {
         val counts = mutableMapOf<String, Int>()
         for (t in tracks) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
-        val cloud = LinearLayout(this); cloud.orientation = LinearLayout.HORIZONTAL
-        cloud.tag = "header"
-        var line = 0
-        for ((tag, n) in counts.entries.sortedByDescending { it.value }) {
-            val chip = TextView(this)
-            chip.text = "#$tag"
-            chip.textSize = (14 + minOf(n, 6) * 2).toFloat()
-            chip.setPadding(dp(12), dp(8), dp(12), dp(8))
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, dp(8), dp(8)); chip.layoutParams = lp
+        if (counts.isEmpty()) {
+            shown = emptyList()
+            emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
+            return
+        }
+        // Алфавитный список тегов, без всяких облаков
+        for (tag in counts.keys.sorted()) {
+            val row = TextView(this)
+            row.text = "#$tag  (${counts[tag]})"
+            row.setPadding(dp(12), dp(12), dp(12), dp(12))
             val on = selected.contains(tag)
-            chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
-            chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
-            chip.tag = "header"
-            chip.setOnClickListener {
+            row.setBackgroundColor(if (on) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
+            row.setTextColor(if (on) Color.parseColor("#EEEEF5") else Color.parseColor("#BBBBCC"))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            row.tag = "header"
+            row.setOnClickListener {
                 if (selected.contains(tag)) selected.remove(tag) else selected.add(tag)
                 rebuildContent()
             }
-            cloud.addView(chip)
-            line++
-            if (line % 4 == 0) {
-                contentBox.addView(cloud)
-                val nl = LinearLayout(this); nl.orientation = LinearLayout.HORIZONTAL; nl.tag = "header"
-                contentBox.addView(nl)
-            }
+            contentBox.addView(row)
         }
-        if (cloud.childCount > 0) contentBox.addView(cloud)
-        if (counts.isEmpty()) emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
         val filtered = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
         shown = filtered.shuffled()
         val h = TextView(this)
@@ -492,6 +481,23 @@ class MainActivity : Activity() {
         contentBox.addView(h)
         for (t in shown) addTrackRow(t)
         if (shown.isEmpty()) emptyMsg("Пересечение пусто: сними часть тегов.")
+    }
+
+    private fun addTrackRows(list: List<Track>, header: String) {
+        shown = list
+        val h = TextView(this); h.text = header
+        h.setTextColor(Color.parseColor("#BBBBCC"))
+        h.setPadding(0, dp(4), 0, dp(8))
+        h.tag = "header"
+        contentBox.addView(h)
+        if (subType != null) {
+            val back = Button(this); back.text = "⬅ Ко всем разделам"
+            back.tag = "header"
+            back.setOnClickListener { subType = null; subValue = null; rebuildContent() }
+            contentBox.addView(back)
+        }
+        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
+        for (t in list) addTrackRow(t)
     }
 
     private fun emptyMsg(msg: String) {
