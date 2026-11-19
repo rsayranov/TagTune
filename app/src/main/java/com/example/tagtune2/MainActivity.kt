@@ -121,8 +121,11 @@ class MainActivity : Activity() {
     }
 
     private fun refreshNow() {
-        nowText.text = if (PlayerState.uri == null) "Ничего не играет."
-            else (if (PlayerState.playing) "▶ " else "⏸ ") + PlayerState.title + " — " + PlayerState.artist
+        nowText.text = when {
+            PlayerState.error != null -> "⚠ " + PlayerState.error
+            PlayerState.uri == null -> "Ничего не играет."
+            else -> (if (PlayerState.playing) "▶ " else "⏸ ") + PlayerState.title + " — " + PlayerState.artist
+        }
         playBtn.text = if (PlayerState.playing) "⏸" else "▶"
     }
 
