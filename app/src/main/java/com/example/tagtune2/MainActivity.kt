@@ -2,6 +2,7 @@ package com.example.tagtune2
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -28,6 +29,45 @@ import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
 import java.io.File
 import java.io.FileOutputStream
+
+/* ---------- потоковая раскладка: дети переносятся по строкам ---------- */
+class FlowLayout(context: Context) : ViewGroup(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        var x = paddingLeft; var y = paddingTop; var rowH = 0
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)
+            if (c.visibility == GONE) continue
+            measureChild(c, widthMeasureSpec, heightMeasureSpec)
+            val lp = c.layoutParams as MarginLayoutParams
+            val cw = c.measuredWidth + lp.leftMargin + lp.rightMargin
+            val ch = c.measuredHeight + lp.topMargin + lp.bottomMargin
+            if (x + cw > width - paddingRight && x > paddingLeft) { x = paddingLeft; y += rowH; rowH = 0 }
+            x += cw; rowH = maxOf(rowH, ch)
+        }
+        setMeasuredDimension(width, y + rowH + paddingBottom)
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        val width = r - l
+        var x = paddingLeft; var y = paddingTop; var rowH = 0
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)
+            if (c.visibility == GONE) continue
+            val lp = c.layoutParams as MarginLayoutParams
+            val cw = c.measuredWidth + lp.leftMargin + lp.rightMargin
+            val ch = c.measuredHeight + lp.topMargin + lp.bottomMargin
+            if (x + cw > width - paddingRight && x > paddingLeft) { x = paddingLeft; y += rowH; rowH = 0 }
+            c.layout(x + lp.leftMargin, y + lp.topMargin, x + lp.leftMargin + c.measuredWidth, y + lp.topMargin + c.measuredHeight)
+            x += cw; rowH = maxOf(rowH, ch)
+        }
+    }
+
+    override fun generateLayoutParams(attrs: android.util.AttributeSet?): LayoutParams = MarginLayoutParams(context, attrs)
+    override fun generateDefaultLayoutParams(): LayoutParams = MarginLayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+    override fun generateLayoutParams(p: LayoutParams?): LayoutParams = MarginLayoutParams(p)
+    override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
+}
 
 class MainActivity : Activity() {
 
@@ -486,9 +526,6 @@ class MainActivity : Activity() {
     }
 
     private fun addTagList() {
-        // Фасетная логика: базу фильтруем выбранными тегами,
-        // а показываем только те теги, что встречаются в этой базе
-        // (плюс сами выбранные — чтобы их можно было снять).
         val base = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
         val counts = mutableMapOf<String, Int>()
         for (t in base) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
@@ -499,22 +536,29 @@ class MainActivity : Activity() {
             emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
             return
         }
-        for (tag in counts.keys.sorted()) {
-            val row = TextView(this)
-            row.text = "#$tag  (${counts[tag]})"
-            row.setPadding(dp(12), dp(12), dp(12), dp(12))
+
+        // Выбранные — сверху в порядке выбора, остальные по алфавиту
+        val ordered = selected.toList() + counts.keys.sorted().filter { !selected.contains(it) }
+        val flow = FlowLayout(this)
+        flow.tag = "header"
+        for (tag in ordered) {
+            val chip = TextView(this)
+            chip.text = "#$tag (${counts[tag]})"
+            chip.setPadding(dp(10), dp(8), dp(10), dp(8))
             val on = selected.contains(tag)
-            row.setBackgroundColor(if (on) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
-            row.setTextColor(if (on) Color.parseColor("#EEEEF5") else Color.parseColor("#BBBBCC"))
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
-            row.tag = "header"
-            row.setOnClickListener {
+            chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
+            chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
+            val lp = FlowLayout.LayoutParams(FlowLayout.LayoutParams.WRAP_CONTENT, FlowLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
+            chip.tag = "header"
+            chip.setOnClickListener {
                 if (selected.contains(tag)) selected.remove(tag) else selected.add(tag)
                 rebuildContent()
             }
-            contentBox.addView(row)
+            flow.addView(chip)
         }
+        contentBox.addView(flow)
+
         shown = base.shuffled()
         val h = TextView(this)
         h.text = if (selected.isEmpty()) "Плейлист: все треки (${shown.size}), шафл"
@@ -591,16 +635,17 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
+    /* ---------- РЕДАКТОР ТЕГОВ: теги потоком, все видны сразу ---------- */
 
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(16), dp(8), dp(16), 0)
         val info = TextView(this); box.addView(info)
-        val scroll = HorizontalScrollView(this)
-        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
-        scroll.addView(row); box.addView(scroll)
+
+        val flow = FlowLayout(this)
+        box.addView(flow)
+
         val input = MultiAutoCompleteTextView(this)
         input.hint = "#"; input.threshold = 1
         input.setTokenizer(object : MultiAutoCompleteTextView.Tokenizer {
@@ -617,18 +662,25 @@ class MainActivity : Activity() {
             override fun terminateToken(text: CharSequence): CharSequence = "$text "
         })
         box.addView(input)
+
         val dialog = AlertDialog.Builder(this)
             .setTitle(t.title).setView(box)
             .setPositiveButton("＋ Добавить", null).setNegativeButton("Закрыть", null).create()
+
         fun refresh() {
             val cur = tracks.find { it.uri == t.uri } ?: t
-            row.removeAllViews()
+            flow.removeAllViews()
+            if (cur.tags.isEmpty()) {
+                val none = TextView(this); none.text = "тегов нет"
+                none.setTextColor(Color.parseColor("#8D81A3"))
+                flow.addView(none)
+            }
             for (g in cur.tags) {
                 val chip = TextView(this)
                 chip.text = "#$g ✕"
-                chip.setPadding(dp(12), dp(8), dp(12), dp(8))
-                val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, 0, dp(8), 0); chip.layoutParams = lp
+                chip.setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = FlowLayout.LayoutParams(FlowLayout.LayoutParams.WRAP_CONTENT, FlowLayout.LayoutParams.WRAP_CONTENT)
+                lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
                 chip.setBackgroundColor(Color.parseColor("#3A2A5A")); chip.setTextColor(Color.WHITE)
                 chip.setOnClickListener {
                     info.text = "Убираю #$g…"
@@ -637,10 +689,11 @@ class MainActivity : Activity() {
                         refresh(); rebuildContent(); refreshNow()
                     }
                 }
-                row.addView(chip)
+                flow.addView(chip)
             }
             input.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, allTags()))
         }
+
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val tags = input.text.toString().split(Regex("[\\s,]+"))
@@ -660,6 +713,8 @@ class MainActivity : Activity() {
     private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
         writeTags(t, listOf(tag), add, cb)
 
+    /* ---------- запись: пересборка COMMENT из нетегового текста + актуальных тегов ---------- */
+
     private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
             var ok = false; var msg = "ок"; var newTags: List<String>? = null
@@ -670,8 +725,12 @@ class MainActivity : Activity() {
                 val mp3 = Mp3File(inF.absolutePath)
                 if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
                 val old = mp3.id3v2Tag.comment ?: ""
-                val new = if (add) tags.fold(old) { acc, g -> TagParser.addTagToComment(acc, g) }
-                          else old.split("\n").filter { line -> tags.none { g -> line.trim().lowercase() == "#$g" } }.joinToString("\n")
+                val currentTags = TagParser.extractTags(old)
+                val nonTagLines = old.split("\n").map { it.trimEnd() }
+                    .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
+                val resulting = if (add) (currentTags + tags).distinct()
+                                else currentTags.filter { !tags.contains(it) }
+                val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
                 mp3.id3v2Tag.comment = new
                 mp3.save(outF.absolutePath)
                 contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
