@@ -23,7 +23,6 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
@@ -49,7 +48,7 @@ class FlowLayout(context: Context) : ViewGroup(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         overflowCount = 0
-        var x = paddingLeft; var y = paddingTop; var rowH = 0; var row = 1
+        var posX = paddingLeft; var posY = paddingTop; var rowH = 0; var rowNum = 1
         for (i in 0 until childCount) {
             val c = getChildAt(i)
             if (c.visibility == GONE) continue
@@ -57,28 +56,28 @@ class FlowLayout(context: Context) : ViewGroup(context) {
             val lp = c.layoutParams as MarginLayoutParams
             val cw = c.measuredWidth + lp.leftMargin + lp.rightMargin
             val ch = c.measuredHeight + lp.topMargin + lp.bottomMargin
-            if (x + cw > width - paddingRight && x > paddingLeft) {
-                row++
-                if (maxRows > 0 && row > maxRows) { c.visibility = GONE; overflowCount++; continue }
-                x = paddingLeft; y += rowH; rowH = 0
+            if (posX + cw > width - paddingRight && posX > paddingLeft) {
+                rowNum++
+                if (maxRows > 0 && rowNum > maxRows) { c.visibility = GONE; overflowCount++; continue }
+                posX = paddingLeft; posY += rowH; rowH = 0
             }
-            x += cw; rowH = maxOf(rowH, ch)
+            posX += cw; rowH = maxOf(rowH, ch)
         }
-        setMeasuredDimension(width, y + rowH + paddingBottom)
+        setMeasuredDimension(width, posY + rowH + paddingBottom)
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val width = r - l
-        var x = paddingLeft; var y = paddingTop; var rowH = 0
+        var posX = paddingLeft; var posY = paddingTop; var rowH = 0
         for (i in 0 until childCount) {
             val c = getChildAt(i)
             if (c.visibility == GONE) continue
             val lp = c.layoutParams as MarginLayoutParams
             val cw = c.measuredWidth + lp.leftMargin + lp.rightMargin
             val ch = c.measuredHeight + lp.topMargin + lp.bottomMargin
-            if (x + cw > width - paddingRight && x > paddingLeft) { x = paddingLeft; y += rowH; rowH = 0 }
-            c.layout(x + lp.leftMargin, y + lp.topMargin, x + lp.leftMargin + c.measuredWidth, y + lp.topMargin + c.measuredHeight)
-            x += cw; rowH = maxOf(rowH, ch)
+            if (posX + cw > width - paddingRight && posX > paddingLeft) { posX = paddingLeft; posY += rowH; rowH = 0 }
+            c.layout(posX + lp.leftMargin, posY + lp.topMargin, posX + lp.leftMargin + c.measuredWidth, posY + lp.topMargin + c.measuredHeight)
+            posX += cw; rowH = maxOf(rowH, ch)
         }
     }
 
@@ -345,9 +344,9 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
         }
-        val old = prefs().getString("tree_uri", null)
+        val oldTree = prefs().getString("tree_uri", null)
         trees = prefs().getStringSet("trees", null)?.toMutableSet() ?: mutableSetOf()
-        if (old != null && trees.isEmpty()) { trees.add(old); prefs().edit().putStringSet("trees", trees).apply() }
+        if (oldTree != null && trees.isEmpty()) { trees.add(oldTree); prefs().edit().putStringSet("trees", trees).apply() }
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
@@ -359,9 +358,9 @@ class MainActivity : Activity() {
         libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
 
         val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
-        val title = TextView(this); title.text = "Медиатека"
-        title.textSize = 26f; title.setTextColor(Color.parseColor("#EEEEF5"))
-        topRow.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val headTitle = TextView(this); headTitle.text = "Медиатека"
+        headTitle.textSize = 26f; headTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val settingsBtn = Button(this); settingsBtn.text = "⚙"
         settingsBtn.setOnClickListener { showSettings() }
         topRow.addView(settingsBtn)
@@ -399,7 +398,7 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: ПЛЕЕР (Apple Music style) ---------- */
+        /* ---------- ЭКРАН: ПЛЕЕР ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(10), dp(14), dp(14))
@@ -422,8 +421,8 @@ class MainActivity : Activity() {
                 o.setRoundRect(0, 0, v.width, v.height, dp(16).toFloat())
             }
         }
-        val covW = resources.displayMetrics.widthPixels - dp(28) - dp(40)
-        val covLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, covW)
+        val covSize = resources.displayMetrics.widthPixels - dp(28) - dp(40)
+        val covLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, covSize)
         covLp.setMargins(dp(20), dp(6), dp(20), dp(6))
         npCover.layoutParams = covLp
         playerScreen.addView(npCover)
@@ -473,9 +472,9 @@ class MainActivity : Activity() {
 
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
-        val spacer = TextView(this)
+        val timeSpacer = TextView(this)
         tDur = TextView(this); tDur.text = "0:00"; tDur.setTextColor(Color.parseColor("#9A93A8"))
-        times.addView(tCur); times.addView(spacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); times.addView(tDur)
+        times.addView(tCur); times.addView(timeSpacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); times.addView(tDur)
         playerScreen.addView(times)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
@@ -517,13 +516,12 @@ class MainActivity : Activity() {
         extraRow.addView(qBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val lBtn = Button(this); lBtn.text = "📄 Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
         lBtn.background = pillBg(Color.parseColor("#241638"), 10)
-        lBtn.setPadding(0, 0, 0, 0)
         lBtn.setOnClickListener { openLyricsDialog() }
         extraRow.addView(lBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val tBtn = Button(this); tBtn.text = "🏷 Теги"; tBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        tBtn.background = pillBg(Color.parseColor("#241638"), 10)
-        tBtn.setOnClickListener { curTrack()?.let { openEditor(it) } }
-        extraRow.addView(tBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val tgBtn = Button(this); tgBtn.text = "🏷 Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        tgBtn.background = pillBg(Color.parseColor("#241638"), 10)
+        tgBtn.setOnClickListener { curTrack()?.let { openEditor(it) } }
+        extraRow.addView(tgBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(extraRow)
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
@@ -611,15 +609,13 @@ class MainActivity : Activity() {
             val none = TextView(this); none.text = "Очередь пуста."
             box.addView(none)
         }
-        for ((i, q) in items.withIndex()) {
+        for ((pos, q) in items.withIndex()) {
             val row = TextView(this)
-            val cur = i + 1 == PlayerState.queuePos
-            row.text = "${i + 1}. ${q.title} — ${q.artist}" + (if (cur) "  ▶" else "")
-            row.setTextColor(if (cur) ACCENT else Color.parseColor("#EEEEF5"))
+            val isCur = pos + 1 == PlayerState.queuePos
+            row.text = "${pos + 1}. ${q.title} — ${q.artist}" + (if (isCur) "  ▶" else "")
+            row.setTextColor(if (isCur) ACCENT else Color.parseColor("#EEEEF5"))
             row.setPadding(dp(6), dp(10), dp(6), dp(10))
-            row.setOnClickListener {
-                PlayerService.cmd(this, "play", ArrayList(items), i)
-            }
+            row.setOnClickListener { PlayerService.cmd(this, "play", ArrayList(items), pos) }
             box.addView(row)
         }
         AlertDialog.Builder(this)
@@ -638,7 +634,7 @@ class MainActivity : Activity() {
         tv.lineSpacingExtra = dp(4).toFloat()
         scroll.addView(tv)
         AlertDialog.Builder(this)
-            .setTitle("Текст: " + (PlayerState.title))
+            .setTitle("Текст: " + PlayerState.title)
             .setView(scroll)
             .setNegativeButton("Закрыть", null)
             .show()
@@ -715,8 +711,8 @@ class MainActivity : Activity() {
                     status.visibility = View.GONE
                     rebuildContent()
                 }
-            } catch (t: Throwable) {
-                val err = android.util.Log.getStackTraceString(t)
+            } catch (ex: Throwable) {
+                val err = android.util.Log.getStackTraceString(ex)
                 runOnUiThread {
                     status.visibility = View.VISIBLE
                     status.text = "ОЙ! Споткнулись о камень:\n\n$err"
@@ -822,12 +818,12 @@ class MainActivity : Activity() {
             Triple("genres", "🎼 Жанры", "${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size} жанров"),
             Triple("tags", "🏷 Теги", "$tagCount тегов" + (if (selected.isNotEmpty()) " · выбрано: ${selected.size}" else ""))
         )
-        for ((key, title, sub) in items) {
+        for ((key, lbl, sub) in items) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.VERTICAL
             row.setPadding(dp(16), dp(18), dp(16), dp(18))
             row.setBackgroundColor(Color.parseColor("#1E1E2A"))
-            val t1 = TextView(this); t1.text = title
+            val t1 = TextView(this); t1.text = lbl
             t1.textSize = 19f; t1.setTextColor(Color.parseColor("#EEEEF5"))
             val t2 = TextView(this); t2.text = sub
             t2.setTextColor(Color.parseColor("#BBBBCC"))
@@ -1021,14 +1017,14 @@ class MainActivity : Activity() {
             .setPositiveButton("＋ Добавить", null).setNegativeButton("Закрыть", null).create()
 
         fun refresh() {
-            val cur = tracks.find { it.uri == t.uri } ?: t
+            val curT = tracks.find { it.uri == t.uri } ?: t
             flow.removeAllViews()
-            if (cur.tags.isEmpty()) {
+            if (curT.tags.isEmpty()) {
                 val none = TextView(this); none.text = "тегов нет"
                 none.setTextColor(Color.parseColor("#8D81A3"))
                 flow.addView(none)
             }
-            for (g in cur.tags) {
+            for (g in curT.tags) {
                 val chip = TextView(this)
                 chip.text = "#$g ✕"
                 chip.setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -1127,14 +1123,14 @@ class MainActivity : Activity() {
             }
             pTagsFlow.addView(chip)
         }
-        val more = TextView(this)
-        more.text = "…"
-        more.setPadding(dp(10), dp(7), dp(10), dp(7))
-        more.setTextColor(Color.parseColor("#9A93A8"))
-        pTagsFlow.addView(more)
+        val moreChip = TextView(this)
+        moreChip.text = "…"
+        moreChip.setPadding(dp(10), dp(7), dp(10), dp(7))
+        moreChip.setTextColor(Color.parseColor("#9A93A8"))
+        pTagsFlow.addView(moreChip)
         pTagsFlow.post {
-            if (pTagsFlow.overflowCount == 0) { more.visibility = View.GONE; pTagsFlow.requestLayout() }
-            else more.text = "+${pTagsFlow.overflowCount}"
+            if (pTagsFlow.overflowCount == 0) { moreChip.visibility = View.GONE; pTagsFlow.requestLayout() }
+            else moreChip.text = "+${pTagsFlow.overflowCount}"
         }
         val dur = PlayerState.durationMs
         seekBar.max = (dur.toInt() / 1000).coerceAtLeast(1)
@@ -1168,13 +1164,14 @@ class MainActivity : Activity() {
         shufBtn.setTextColor(if (PlayerState.shuffleOn) ACCENT else Color.parseColor("#8D81A3"))
         repBtn.setTextColor(if (PlayerState.repeatMode > 0) ACCENT else Color.parseColor("#8D81A3"))
         queueInfo.text = if (PlayerState.queueSize > 0) "В очереди: ${PlayerState.queuePos} из ${PlayerState.queueSize}" else ""
-        if (PlayerState.uri == null) { nbCover.setImageResource(0); npCover.setImageResource(0); bigCoverUri = null; lastPlayerUri = null }
+        if (PlayerState.uri == null) {
+            nbCover.setImageResource(0); npCover.setImageResource(0)
+            bigCoverUri = null; lastPlayerUri = null
+        }
         if (PlayerState.uri != lastPlayerUri) {
             lastPlayerUri = PlayerState.uri
             rebuildPlayerMeta()
         }
-        val small = if (PlayerState.uri == null) null else thumbCache.get(curTrack()?.coverPath ?: "")
-        if (small != null) nbCover.setImageBitmap(small)
     }
 
     override fun onResume() {
