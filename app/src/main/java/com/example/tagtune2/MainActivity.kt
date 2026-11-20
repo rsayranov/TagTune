@@ -631,7 +631,7 @@ class MainActivity : Activity() {
         tv.text = curTrack()?.lyrics ?: "Текст не найден в метаданных файла."
         tv.setTextColor(Color.parseColor("#EEEEF5"))
         tv.setPadding(dp(16), dp(8), dp(16), dp(16))
-        tv.lineSpacingExtra = dp(4).toFloat()
+        tv.setLineSpacing(dp(4).toFloat(), 1f)
         scroll.addView(tv)
         AlertDialog.Builder(this)
             .setTitle("Текст: " + PlayerState.title)
