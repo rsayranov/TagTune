@@ -40,10 +40,11 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
 
-/* ---------- потоковая раскладка с лимитом строк ---------- */
+/* ---------- потоковая раскладка: перенос по строкам, опционально по центру ---------- */
 class FlowLayout(context: Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
+    var centerRows = false
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
@@ -68,16 +69,36 @@ class FlowLayout(context: Context) : ViewGroup(context) {
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val width = r - l
-        var posX = paddingLeft; var posY = paddingTop; var rowH = 0
+        val rows = mutableListOf<MutableList<View>>()
+        var cur = mutableListOf<View>()
+        var posX = paddingLeft
         for (i in 0 until childCount) {
             val c = getChildAt(i)
             if (c.visibility == GONE) continue
             val lp = c.layoutParams as MarginLayoutParams
             val cw = c.measuredWidth + lp.leftMargin + lp.rightMargin
-            val ch = c.measuredHeight + lp.topMargin + lp.bottomMargin
-            if (posX + cw > width - paddingRight && posX > paddingLeft) { posX = paddingLeft; posY += rowH; rowH = 0 }
-            c.layout(posX + lp.leftMargin, posY + lp.topMargin, posX + lp.leftMargin + c.measuredWidth, posY + lp.topMargin + c.measuredHeight)
-            posX += cw; rowH = maxOf(rowH, ch)
+            if (posX + cw > width - paddingRight && posX > paddingLeft) {
+                rows.add(cur); cur = mutableListOf(); posX = paddingLeft
+            }
+            cur.add(c); posX += cw
+        }
+        rows.add(cur)
+        var posY = paddingTop
+        for (row in rows) {
+            var rowW = 0; var rowH = 0
+            for (c in row) {
+                val lp = c.layoutParams as MarginLayoutParams
+                rowW += c.measuredWidth + lp.leftMargin + lp.rightMargin
+                rowH = maxOf(rowH, c.measuredHeight + lp.topMargin + lp.bottomMargin)
+            }
+            var cx = if (centerRows) maxOf(paddingLeft, (width - rowW) / 2) else paddingLeft
+            for (c in row) {
+                val lp = c.layoutParams as MarginLayoutParams
+                val top = posY + lp.topMargin
+                c.layout(cx + lp.leftMargin, top, cx + lp.leftMargin + c.measuredWidth, top + c.measuredHeight)
+                cx += c.measuredWidth + lp.leftMargin + lp.rightMargin
+            }
+            posY += rowH
         }
     }
 
@@ -206,6 +227,7 @@ class MainActivity : Activity() {
     private val REQ_TREE = 202
     private val ACCENT = Color.parseColor("#FF4D6D")
     private val GRAY = Color.parseColor("#8D81A3")
+    private val PAUSE_GLYPH = "‖"
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -463,6 +485,7 @@ class MainActivity : Activity() {
 
         pTagsFlow = FlowLayout(this)
         pTagsFlow.maxRows = 2
+        pTagsFlow.centerRows = true
         pTagsFlow.setPadding(dp(6), dp(10), dp(6), 0)
         playerScreen.addView(pTagsFlow)
 
@@ -502,7 +525,7 @@ class MainActivity : Activity() {
         prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
         transport.addView(prevBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         pPlay = Button(this); pPlay.text = "▶"
-        pPlay.setTextColor(Color.WHITE); pPlay.textSize = 24f
+        pPlay.setTextColor(Color.WHITE); pPlay.textSize = 22f
         pPlay.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(ACCENT, Color.parseColor("#7C4DFF"))).apply { shape = GradientDrawable.OVAL }
         pPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
         val playLp = LinearLayout.LayoutParams(dp(76), dp(76))
@@ -521,23 +544,23 @@ class MainActivity : Activity() {
 
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.setPadding(0, dp(14), 0, 0)
-        val qBtn = Button(this); qBtn.text = "☰ Список"; qBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        val qBtn = Button(this); qBtn.text = "Список"; qBtn.setTextColor(Color.parseColor("#EEEEF5"))
         qBtn.isAllCaps = false; qBtn.textSize = 14f
-        qBtn.background = pillBg(Color.parseColor("#241638"), 10)
+        qBtn.background = pillBg(Color.parseColor("#241638"), 12)
         qBtn.setOnClickListener { openQueueDialog() }
-        val qLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); qLp.setMargins(dp(3), 0, dp(3), 0)
+        val qLp = LinearLayout.LayoutParams(0, dp(44), 1f); qLp.setMargins(dp(3), 0, dp(3), 0)
         extraRow.addView(qBtn, qLp)
-        val lBtn = Button(this); lBtn.text = "❝ Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        val lBtn = Button(this); lBtn.text = "Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
         lBtn.isAllCaps = false; lBtn.textSize = 14f
-        lBtn.background = pillBg(Color.parseColor("#241638"), 10)
+        lBtn.background = pillBg(Color.parseColor("#241638"), 12)
         lBtn.setOnClickListener { openLyricsDialog() }
-        val lLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); lLp.setMargins(dp(3), 0, dp(3), 0)
+        val lLp = LinearLayout.LayoutParams(0, dp(44), 1f); lLp.setMargins(dp(3), 0, dp(3), 0)
         extraRow.addView(lBtn, lLp)
-        val tgBtn = Button(this); tgBtn.text = "# Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        val tgBtn = Button(this); tgBtn.text = "Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
         tgBtn.isAllCaps = false; tgBtn.textSize = 14f
-        tgBtn.background = pillBg(Color.parseColor("#241638"), 10)
+        tgBtn.background = pillBg(Color.parseColor("#241638"), 12)
         tgBtn.setOnClickListener { curTrack()?.let { openEditor(it) } }
-        val tLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); tLp.setMargins(dp(3), 0, dp(3), 0)
+        val tLp = LinearLayout.LayoutParams(0, dp(44), 1f); tLp.setMargins(dp(3), 0, dp(3), 0)
         extraRow.addView(tgBtn, tLp)
         playerScreen.addView(extraRow)
 
@@ -1176,8 +1199,8 @@ class MainActivity : Activity() {
             else -> PlayerState.title + " — " + PlayerState.artist
         }
         nbText.text = label
-        nbPlay.text = if (playing) "⏸" else "▶"
-        pPlay.text = if (playing) "⏸" else "▶"
+        nbPlay.text = if (playing) PAUSE_GLYPH else "▶"
+        pPlay.text = if (playing) PAUSE_GLYPH else "▶"
         shufBtn.setTextColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
         repBtn.text = if (PlayerState.repeatMode == 2) "⟳¹" else "⟳"
         repBtn.setTextColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
