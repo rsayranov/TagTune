@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -28,8 +29,12 @@ import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.util.concurrent.Executors
 
 /* ---------- потоковая раскладка: дети переносятся по строкам ---------- */
 class FlowLayout(context: Context) : ViewGroup(context) {
@@ -70,6 +75,120 @@ class FlowLayout(context: Context) : ViewGroup(context) {
     override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
 }
 
+/* ---------- читает только ID3-шапку из начала потока, без копирования файла ---------- */
+object Id3Reader {
+    data class Result(
+        val comment: String?, val cover: ByteArray?,
+        val title: String?, val artist: String?, val album: String?,
+        val genre: String?, val durationMs: Long
+    )
+
+    fun read(ins: InputStream): Result? {
+        val hdr = ByteArray(10)
+        if (ins.read(hdr) != 10) return null
+        if (hdr[0].toInt().toChar() != 'I' || hdr[1].toInt().toChar() != 'D' || hdr[2].toInt().toChar() != '3') return null
+        val ver = hdr[3].toInt() and 0xFF
+        val size = synch(hdr[6], hdr[7], hdr[8], hdr[9])
+        if (size <= 0 || size > 32 * 1024 * 1024) return null
+        val tag = ByteArray(size)
+        var off = 0
+        while (off < size) {
+            val r = ins.read(tag, off, size - off)
+            if (r <= 0) break
+            off += r
+        }
+        var comment: String? = null; var cover: ByteArray? = null
+        var title: String? = null; var artist: String? = null
+        var album: String? = null; var genre: String? = null
+        var dur = 0L
+        var p = 0
+        while (p + 10 <= size) {
+            if (ver >= 3) {
+                val id = String(tag, p, 4, Charsets.ISO_8859_1)
+                if (!id[0].isLetterOrDigit()) break
+                val fsz = if (ver == 4) synch(tag[p + 4], tag[p + 5], tag[p + 6], tag[p + 7])
+                          else int4(tag[p + 4], tag[p + 5], tag[p + 6], tag[p + 7])
+                p += 10
+                if (fsz <= 0 || p + fsz > size) break
+                val body = tag.copyOfRange(p, p + fsz)
+                p += fsz
+                when (id) {
+                    "COMM" -> if (comment == null) comment = decodeComm(body)
+                    "APIC" -> if (cover == null) cover = decodeApic(body, false)
+                    "TIT2" -> if (title == null) title = decodeTextFrame(body)
+                    "TPE1" -> if (artist == null) artist = decodeTextFrame(body)
+                    "TALB" -> if (album == null) album = decodeTextFrame(body)
+                    "TCON" -> if (genre == null) genre = decodeTextFrame(body)
+                    "TLEN" -> decodeTextFrame(body)?.toLongOrNull()?.let { dur = it }
+                }
+            } else if (ver == 2) {
+                val id = String(tag, p, 3, Charsets.ISO_8859_1)
+                if (!id[0].isLetterOrDigit()) break
+                val fsz = ((tag[p + 3].toInt() and 0xFF) shl 16) or ((tag[p + 4].toInt() and 0xFF) shl 8) or (tag[p + 5].toInt() and 0xFF)
+                p += 6
+                if (fsz <= 0 || p + fsz > size) break
+                val body = tag.copyOfRange(p, p + fsz)
+                p += fsz
+                when (id) {
+                    "COM" -> if (comment == null) comment = decodeComm(body)
+                    "PIC" -> if (cover == null) cover = decodeApic(body, true)
+                    "TT2" -> if (title == null) title = decodeTextFrame(body)
+                    "TP1" -> if (artist == null) artist = decodeTextFrame(body)
+                    "TAL" -> if (album == null) album = decodeTextFrame(body)
+                    "TCO" -> if (genre == null) genre = decodeTextFrame(body)
+                }
+            } else break
+        }
+        return Result(comment, cover, title, artist, album, genre, dur)
+    }
+
+    private fun synch(a: Byte, b: Byte, c: Byte, d: Byte) =
+        ((a.toInt() and 0x7F) shl 21) or ((b.toInt() and 0x7F) shl 14) or ((c.toInt() and 0x7F) shl 7) or (d.toInt() and 0x7F)
+
+    private fun int4(a: Byte, b: Byte, c: Byte, d: Byte) =
+        ((a.toInt() and 0xFF) shl 24) or ((b.toInt() and 0xFF) shl 16) or ((c.toInt() and 0xFF) shl 8) or (d.toInt() and 0xFF)
+
+    private fun skipTerminator(b: ByteArray, from: Int, enc: Int): Int {
+        if (enc == 1 || enc == 2) {
+            var i = from
+            while (i + 1 < b.size) { if (b[i].toInt() == 0 && b[i + 1].toInt() == 0) return i + 2; i += 2 }
+            return b.size
+        }
+        var i = from
+        while (i < b.size) { if (b[i].toInt() == 0) return i + 1; i++ }
+        return b.size
+    }
+
+    private fun decodeText(b: ByteArray, from: Int, to: Int, enc: Int): String = try {
+        val cs = when (enc) { 1 -> Charsets.UTF_16; 2 -> Charsets.UTF_16BE; 3 -> Charsets.UTF_8; else -> Charsets.ISO_8859_1 }
+        String(b, from, maxOf(0, to - from), cs).trimEnd('�')
+    } catch (e: Exception) { "" }
+
+    private fun decodeTextFrame(body: ByteArray): String? {
+        if (body.isEmpty()) return null
+        val enc = body[0].toInt() and 0xFF
+        return decodeText(body, 1, body.size, enc)
+    }
+
+    private fun decodeComm(body: ByteArray): String? {
+        if (body.size < 5) return null
+        val enc = body[0].toInt() and 0xFF
+        val i = skipTerminator(body, 4, enc)
+        return decodeText(body, i, body.size, enc)
+    }
+
+    private fun decodeApic(body: ByteArray, v2: Boolean): ByteArray? {
+        if (body.size < 4) return null
+        val enc = body[0].toInt() and 0xFF
+        var i = 1
+        if (v2) i += 3 else { while (i < body.size && body[i].toInt() != 0) i++; i++ }
+        i += 1
+        i = skipTerminator(body, i, enc)
+        if (i >= body.size) return null
+        return body.copyOfRange(i, body.size)
+    }
+}
+
 class MainActivity : Activity() {
 
     private val REQ_TREE = 202
@@ -104,8 +223,11 @@ class MainActivity : Activity() {
     private var subType: String? = null
     private var subValue: String? = null
     private var trees = mutableSetOf<String>()
+    private var visibleLimit = 100
     private var bigCoverBm: Bitmap? = null
     private var bigCoverUri: String? = null
+    private val thumbCache = object : LruCache<String, Bitmap>(80) {}
+    private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
     private val listener: () -> Unit = { runOnUiThread { refreshNow(); highlightCurrent() } }
     private val poll = object : Runnable {
@@ -124,6 +246,7 @@ class MainActivity : Activity() {
     private fun allTags(): List<String> = tracks.flatMap { it.tags }.distinct().sorted()
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
+    private fun cacheFile() = File(filesDir, "library_cache.json")
 
     private fun loadBitmap(path: String?, target: Int): Bitmap? {
         if (path == null) return null
@@ -140,6 +263,52 @@ class MainActivity : Activity() {
             BitmapFactory.decodeFile(path, opts)
         } catch (e: Exception) { null }
     }
+
+    private fun bindThumb(iv: ImageView, path: String?) {
+        if (path == null) { iv.setImageBitmap(null); iv.setBackgroundColor(Color.parseColor("#2A2A3A")); return }
+        val cached = thumbCache.get(path)
+        if (cached != null) { iv.setImageBitmap(cached); return }
+        iv.setImageBitmap(null); iv.setBackgroundColor(Color.parseColor("#2A2A3A")); iv.tag = path
+        thumbPool.execute {
+            val bm = loadBitmap(path, 96)
+            if (bm != null) thumbCache.put(path, bm)
+            runOnUiThread { if (iv.tag as? String == path) iv.setImageBitmap(bm) }
+        }
+    }
+
+    /* ---------- кэш библиотеки: мгновенный старт ---------- */
+
+    private fun saveLibraryCache() {
+        try {
+            val arr = JSONArray()
+            for (t in tracks) {
+                val o = JSONObject()
+                o.put("uri", t.uri); o.put("title", t.title); o.put("artist", t.artist)
+                o.put("album", t.album); o.put("genre", t.genre); o.put("dur", t.durationMs)
+                o.put("tags", JSONArray(t.tags))
+                if (t.coverPath != null) o.put("cover", t.coverPath) else o.put("cover", JSONObject.NULL)
+                arr.put(o)
+            }
+            cacheFile().writeText(arr.toString())
+        } catch (e: Exception) { }
+    }
+
+    private fun loadLibraryCache(): List<Track> = try {
+        val arr = JSONArray(cacheFile().readText())
+        val out = mutableListOf<Track>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val tags = mutableListOf<String>()
+            val ta = o.optJSONArray("tags")
+            if (ta != null) for (j in 0 until ta.length()) tags.add(ta.getString(j))
+            val cover = if (o.isNull("cover")) null else o.getString("cover")
+            out.add(Track(
+                o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
+                o.optString("album", "Неизвестный альбом"), o.optString("genre", ""), o.optLong("dur", 0)
+            ))
+        }
+        out
+    } catch (e: Exception) { emptyList() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -271,6 +440,9 @@ class MainActivity : Activity() {
 
         setContentView(root)
 
+        tracks = loadLibraryCache()
+        if (tracks.isNotEmpty()) rebuildContent()
+
         if (trees.isEmpty()) {
             status.visibility = View.VISIBLE
             status.text = "Первый запуск: выбери папку с музыкой"
@@ -360,7 +532,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- сканирование ---------- */
+    /* ---------- сканирование: читаем только ID3-шапку ---------- */
 
     private fun startScan() {
         status.visibility = View.VISIBLE
@@ -376,9 +548,10 @@ class MainActivity : Activity() {
                 val out = mutableListOf<Track>()
                 for (f in files) {
                     val key = f.uri.toString()
-                    if (seen.add(key) && out.size < 500) out.add(readTrack(f))
+                    if (seen.add(key) && out.size < 5000) out.add(readTrack(f))
                 }
                 tracks = out
+                saveLibraryCache()
                 runOnUiThread {
                     status.visibility = View.GONE
                     rebuildContent()
@@ -394,7 +567,7 @@ class MainActivity : Activity() {
     }
 
     private fun walk(dir: DocumentFile?, out: MutableList<DocumentFile>, depth: Int) {
-        if (dir == null || depth > 6 || out.size > 500) return
+        if (dir == null || depth > 8 || out.size > 5000) return
         for (f in dir.listFiles()) {
             if (f.isDirectory) walk(f, out, depth + 1)
             else if (f.name?.endsWith(".mp3", true) == true) out.add(f)
@@ -407,39 +580,43 @@ class MainActivity : Activity() {
         var album = "Неизвестный альбом"
         var genre = ""
         var durationMs = 0L
-        try {
-            val mmr = MediaMetadataRetriever()
-            mmr.setDataSource(this, f.uri)
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { title = it }
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { album = it }
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { genre = it }
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
-            mmr.release()
-        } catch (e: Exception) { }
         var tags = emptyList<String>()
         var coverPath: String? = null
         try {
-            val tmp = File(cacheDir, "tagprobe.mp3")
-            contentResolver.openInputStream(f.uri)?.use { ins -> FileOutputStream(tmp).use { ins.copyTo(it) } }
-            val mp3 = Mp3File(tmp.absolutePath)
-            if (mp3.hasId3v2Tag()) {
-                tags = TagParser.extractTags(mp3.id3v2Tag.comment)
-                val img = mp3.id3v2Tag.albumImage
-                if (img != null && img.isNotEmpty()) {
-                    val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
-                    cf.writeBytes(img)
-                    coverPath = cf.absolutePath
+            contentResolver.openInputStream(f.uri)?.use { ins ->
+                val r = Id3Reader.read(ins)
+                if (r != null) {
+                    r.title?.let { if (it.isNotBlank()) title = it }
+                    r.artist?.let { if (it.isNotBlank()) artist = it }
+                    r.album?.let { if (it.isNotBlank()) album = it }
+                    r.genre?.let { if (it.isNotBlank()) genre = it }
+                    durationMs = r.durationMs
+                    tags = r.comment?.let { TagParser.extractTags(it) } ?: emptyList()
+                    r.cover?.let { bytes ->
+                        if (bytes.isNotEmpty()) {
+                            val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                            cf.writeBytes(bytes)
+                            coverPath = cf.absolutePath
+                        }
+                    }
                 }
             }
-            tmp.delete()
         } catch (e: Exception) { }
+        if (durationMs == 0L) {
+            try {
+                val mmr = MediaMetadataRetriever()
+                mmr.setDataSource(this, f.uri)
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                mmr.release()
+            } catch (e: Exception) { }
+        }
         return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs)
     }
 
     /* ---------- контент медиатеки ---------- */
 
-    private fun rebuildContent() {
+    private fun rebuildContent(resetLimit: Boolean = true) {
+        if (resetLimit) visibleLimit = 100
         contentBox.removeAllViews()
         if (currentTab == "menu") { addMenuRows(); highlightCurrent(); return }
         val back = Button(this); back.text = "⬅ Меню"
@@ -454,6 +631,17 @@ class MainActivity : Activity() {
             "tags" -> addTagList()
         }
         highlightCurrent()
+    }
+
+    private fun addPaged(list: List<Track>) {
+        for (t in list.take(visibleLimit)) addTrackRow(t)
+        if (list.size > visibleLimit) {
+            val more = Button(this)
+            more.text = "Показать ещё (${list.size - visibleLimit} осталось)"
+            more.tag = "header"
+            more.setOnClickListener { visibleLimit += 200; rebuildContent(false) }
+            contentBox.addView(more)
+        }
     }
 
     private fun addMenuRows() {
@@ -495,7 +683,7 @@ class MainActivity : Activity() {
             h.setPadding(0, dp(6), 0, dp(8))
             h.tag = "header"
             contentBox.addView(h)
-            for (t in untagged) addTrackRow(t)
+            addPaged(untagged)
         }
 
         val passport = TextView(this)
@@ -538,7 +726,6 @@ class MainActivity : Activity() {
             return
         }
 
-        // Выбранные — сверху в порядке выбора, остальные по алфавиту
         val ordered = selected.toList() + counts.keys.sorted().filter { !selected.contains(it) }
         val flow = FlowLayout(this)
         flow.tag = "header"
@@ -568,7 +755,7 @@ class MainActivity : Activity() {
         h.setPadding(0, dp(8), 0, dp(8))
         h.tag = "header"
         contentBox.addView(h)
-        for (t in shown) addTrackRow(t)
+        addPaged(shown)
         if (shown.isEmpty()) emptyMsg("Пересечение пусто: сними часть тегов.")
     }
 
@@ -586,7 +773,7 @@ class MainActivity : Activity() {
             contentBox.addView(back)
         }
         if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
-        for (t in list) addTrackRow(t)
+        addPaged(list)
     }
 
     private fun emptyMsg(msg: String) {
@@ -607,8 +794,7 @@ class MainActivity : Activity() {
         val iv = ImageView(this)
         iv.scaleType = ImageView.ScaleType.CENTER_CROP
         iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
-        val bm = loadBitmap(t.coverPath, 96)
-        if (bm != null) iv.setImageBitmap(bm)
+        bindThumb(iv, t.coverPath)
         rowL.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
 
         val txt = TextView(this)
@@ -636,7 +822,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ: теги потоком, все видны сразу ---------- */
+    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
 
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
@@ -714,8 +900,6 @@ class MainActivity : Activity() {
     private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
         writeTags(t, listOf(tag), add, cb)
 
-    /* ---------- запись: пересборка COMMENT из нетегового текста + актуальных тегов ---------- */
-
     private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
             var ok = false; var msg = "ок"; var newTags: List<String>? = null
@@ -737,6 +921,7 @@ class MainActivity : Activity() {
                 contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
                 newTags = TagParser.extractTags(new)
                 inF.delete(); outF.delete(); ok = true
+                saveLibraryCache()
             } catch (e: Exception) {
                 msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — добавь папку заново в ⚙ Настройках (нужно право записи)."
             }
