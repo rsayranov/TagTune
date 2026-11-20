@@ -33,6 +33,9 @@ object PlayerState {
     var playing = false
     var durationMs = 0
     var error: String? = null
+    var queueSize = 0
+    var queuePos = 0
+    var queueItems: List<QItem> = emptyList()
     val listeners = mutableListOf<() -> Unit>()
     fun emit() { listeners.toList().forEach { it() } }
 }
@@ -101,7 +104,6 @@ class PlayerService : Service() {
     private fun playCurrent() {
         val item = queue.getOrNull(index) ?: return
         val now = SystemClock.uptimeMillis()
-        // Предохранитель от шквала команд: тот же трек чаще 4 раз в секунду не перезапускаем
         if (now - lastPlayAtMs < 250 && PlayerState.uri == item.uri) return
         lastPlayAtMs = now
 
@@ -112,6 +114,9 @@ class PlayerService : Service() {
         PlayerState.artist = item.artist
         PlayerState.playing = true
         PlayerState.error = null
+        PlayerState.queueItems = queue
+        PlayerState.queueSize = queue.size
+        PlayerState.queuePos = index + 1
         updateState(); startFg(); PlayerState.emit()
 
         Thread {
@@ -126,7 +131,6 @@ class PlayerService : Service() {
                 mp.setDataSource(this, Uri.parse(item.uri))
                 mp.setOnCompletionListener {
                     val played = SystemClock.uptimeMillis() - startedAtMs
-                    // Карусель-стоп: мгновенный «конец» — это ошибка, а не конец трека
                     if (played > 1000) mainHandler.post { next() }
                     else mainHandler.post { fail("Трек завершился мгновенно — поток пустой или недоступный. Перебор остановлен.") }
                 }
