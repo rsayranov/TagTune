@@ -36,6 +36,8 @@ object PlayerState {
     var queueSize = 0
     var queuePos = 0
     var queueItems: List<QItem> = emptyList()
+    var shuffleOn = true
+    var repeatMode = 0
     val listeners = mutableListOf<() -> Unit>()
     fun emit() { listeners.toList().forEach { it() } }
 }
@@ -91,6 +93,14 @@ class PlayerService : Service() {
                 playCurrent()
             }
             "toggle" -> if (player?.isPlaying == true) pause() else resume()
+            "toggleShuffle" -> {
+                PlayerState.shuffleOn = !PlayerState.shuffleOn
+                updateState(); PlayerState.emit()
+            }
+            "toggleRepeat" -> {
+                PlayerState.repeatMode = (PlayerState.repeatMode + 1) % 3
+                updateState(); PlayerState.emit()
+            }
             "next" -> next()
             "prev" -> prev()
             "seek" -> seek(intent.getIntExtra("seek", 0))
@@ -131,7 +141,8 @@ class PlayerService : Service() {
                 mp.setDataSource(this, Uri.parse(item.uri))
                 mp.setOnCompletionListener {
                     val played = SystemClock.uptimeMillis() - startedAtMs
-                    if (played > 1000) mainHandler.post { next() }
+                    // Карусель-стоп: мгновенный «конец» — это ошибка, а не конец трека
+                    if (played > 1000) mainHandler.post { autoNext() }
                     else mainHandler.post { fail("Трек завершился мгновенно — поток пустой или недоступный. Перебор остановлен.") }
                 }
                 mp.setOnErrorListener { _, what, extra ->
@@ -150,6 +161,41 @@ class PlayerService : Service() {
                 mainHandler.post { fail("Не удалось открыть трек: ${e.javaClass.simpleName}: ${e.message}") }
             }
         }.start()
+    }
+
+    /* ---------- что играть дальше ---------- */
+
+    private fun autoNext() {
+        if (queue.isEmpty()) return
+        when (PlayerState.repeatMode) {
+            2 -> { playCurrent(); return }                       // повтор одного трека
+        }
+        if (PlayerState.shuffleOn && queue.size > 1) {           // шафл: случайный, не тот же
+            var r = index
+            while (r == index) r = (Math.random() * queue.size).toInt()
+            index = r
+            playCurrent()
+            return
+        }
+        if (index + 1 < queue.size) { index++; playCurrent() }   // дальше по очереди
+        else if (PlayerState.repeatMode == 1) { index = 0; playCurrent() } // повтор очереди
+        else pause()                                             // конец очереди
+    }
+
+    private fun next() {
+        if (queue.isEmpty()) return
+        if (PlayerState.shuffleOn && queue.size > 1) {
+            var r = index
+            while (r == index) r = (Math.random() * queue.size).toInt()
+            index = r
+        } else index = (index + 1) % queue.size
+        playCurrent()
+    }
+
+    private fun prev() {
+        if (queue.isEmpty()) return
+        index = (index - 1 + queue.size) % queue.size
+        playCurrent()
     }
 
     private fun fail(msg: String) {
@@ -180,8 +226,6 @@ class PlayerService : Service() {
         updateState(); startFg(); PlayerState.emit()
     }
 
-    private fun next() { if (queue.isNotEmpty()) { index = (index + 1) % queue.size; playCurrent() } }
-    private fun prev() { if (queue.isNotEmpty()) { index = (index - 1 + queue.size) % queue.size; playCurrent() } }
     private fun seek(ms: Int) { runCatching { player?.seekTo(ms) }; updateState() }
 
     private fun stopAll() {
