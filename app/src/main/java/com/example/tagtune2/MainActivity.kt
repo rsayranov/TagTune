@@ -205,6 +205,7 @@ class MainActivity : Activity() {
 
     private val REQ_TREE = 202
     private val ACCENT = Color.parseColor("#FF4D6D")
+    private val GRAY = Color.parseColor("#8D81A3")
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -226,7 +227,7 @@ class MainActivity : Activity() {
     private lateinit var pPlay: Button
     private lateinit var shufBtn: TextView
     private lateinit var repBtn: TextView
-    private lateinit var queueInfo: TextView
+    private lateinit var queueCounter: TextView
 
     data class Track(
         val uri: String, val title: String, val artist: String,
@@ -405,11 +406,22 @@ class MainActivity : Activity() {
         playerScreen.visibility = View.GONE
 
         val pTop = LinearLayout(this); pTop.orientation = LinearLayout.HORIZONTAL
-        val pBack = TextView(this); pBack.text = "⬇"; pBack.textSize = 22f
+        pTop.gravity = android.view.Gravity.CENTER_VERTICAL
+        val pBack = TextView(this); pBack.text = "←"; pBack.textSize = 20f
         pBack.setTextColor(Color.parseColor("#EEEEF5"))
-        pBack.setPadding(dp(8), dp(4), dp(16), dp(4))
+        pBack.gravity = android.view.Gravity.CENTER
+        pBack.background = pillBg(Color.parseColor("#241638"), 99)
+        pBack.setPadding(dp(14), dp(8), dp(14), dp(8))
         pBack.setOnClickListener { showLibrary() }
         pTop.addView(pBack)
+        queueCounter = TextView(this); queueCounter.textSize = 13f
+        queueCounter.setTextColor(GRAY)
+        queueCounter.gravity = android.view.Gravity.CENTER
+        pTop.addView(queueCounter, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val pSpacer = TextView(this); pSpacer.text = "←"; pSpacer.textSize = 20f
+        pSpacer.visibility = View.INVISIBLE
+        pSpacer.setPadding(dp(14), dp(8), dp(14), dp(8))
+        pTop.addView(pSpacer)
         playerScreen.addView(pTop)
 
         npCover = ImageView(this)
@@ -480,48 +492,53 @@ class MainActivity : Activity() {
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(10), 0, 0)
-        shufBtn = TextView(this); shufBtn.text = "🔀"; shufBtn.textSize = 20f
-        shufBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+        shufBtn = TextView(this); shufBtn.text = "⇆"; shufBtn.textSize = 22f
+        shufBtn.gravity = android.view.Gravity.CENTER
         shufBtn.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
         transport.addView(shufBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val prevBtn = TextView(this); prevBtn.text = "⏮"; prevBtn.textSize = 26f
+        val prevBtn = TextView(this); prevBtn.text = "⏮"; prevBtn.textSize = 24f
         prevBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        prevBtn.gravity = android.view.Gravity.CENTER
         prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
         transport.addView(prevBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         pPlay = Button(this); pPlay.text = "▶"
-        pPlay.setTextColor(Color.WHITE); pPlay.textSize = 26f
+        pPlay.setTextColor(Color.WHITE); pPlay.textSize = 24f
         pPlay.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(ACCENT, Color.parseColor("#7C4DFF"))).apply { shape = GradientDrawable.OVAL }
         pPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
-        transport.addView(pPlay, LinearLayout.LayoutParams(0, dp(72), 1f))
-        val nextBtn = TextView(this); nextBtn.text = "⏭"; nextBtn.textSize = 26f
+        val playLp = LinearLayout.LayoutParams(dp(76), dp(76))
+        playLp.setMargins(dp(10), 0, dp(10), 0)
+        transport.addView(pPlay, playLp)
+        val nextBtn = TextView(this); nextBtn.text = "⏭"; nextBtn.textSize = 24f
         nextBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        nextBtn.gravity = android.view.Gravity.CENTER
         nextBtn.setOnClickListener { PlayerService.cmd(this, "next") }
         transport.addView(nextBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        repBtn = TextView(this); repBtn.text = "🔁"; repBtn.textSize = 20f
-        repBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+        repBtn = TextView(this); repBtn.text = "⟳"; repBtn.textSize = 22f
+        repBtn.gravity = android.view.Gravity.CENTER
         repBtn.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
         transport.addView(repBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(transport)
 
-        queueInfo = TextView(this); queueInfo.setTextColor(Color.parseColor("#9A93A8"))
-        queueInfo.gravity = android.view.Gravity.CENTER
-        queueInfo.setPadding(0, dp(8), 0, 0)
-        playerScreen.addView(queueInfo)
-
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
-        extraRow.setPadding(0, dp(10), 0, 0)
+        extraRow.setPadding(0, dp(14), 0, 0)
         val qBtn = Button(this); qBtn.text = "☰ Список"; qBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        qBtn.isAllCaps = false; qBtn.textSize = 14f
         qBtn.background = pillBg(Color.parseColor("#241638"), 10)
         qBtn.setOnClickListener { openQueueDialog() }
-        extraRow.addView(qBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val lBtn = Button(this); lBtn.text = "📄 Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        val qLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); qLp.setMargins(dp(3), 0, dp(3), 0)
+        extraRow.addView(qBtn, qLp)
+        val lBtn = Button(this); lBtn.text = "❝ Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        lBtn.isAllCaps = false; lBtn.textSize = 14f
         lBtn.background = pillBg(Color.parseColor("#241638"), 10)
         lBtn.setOnClickListener { openLyricsDialog() }
-        extraRow.addView(lBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val tgBtn = Button(this); tgBtn.text = "🏷 Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        val lLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); lLp.setMargins(dp(3), 0, dp(3), 0)
+        extraRow.addView(lBtn, lLp)
+        val tgBtn = Button(this); tgBtn.text = "# Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
+        tgBtn.isAllCaps = false; tgBtn.textSize = 14f
         tgBtn.background = pillBg(Color.parseColor("#241638"), 10)
         tgBtn.setOnClickListener { curTrack()?.let { openEditor(it) } }
-        extraRow.addView(tgBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val tLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); tLp.setMargins(dp(3), 0, dp(3), 0)
+        extraRow.addView(tgBtn, tLp)
         playerScreen.addView(extraRow)
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
@@ -759,11 +776,6 @@ class MainActivity : Activity() {
                 }
             }
         } catch (e: Exception) { }
-        var bitrate = 0
-        if (durationMs > 0) {
-            val len = runCatching { f.length() }.getOrDefault(0L)
-            if (len > 0) bitrate = (len * 8 / durationMs).toInt()
-        }
         if (durationMs == 0L) {
             try {
                 val mmr = MediaMetadataRetriever()
@@ -771,6 +783,11 @@ class MainActivity : Activity() {
                 mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
                 mmr.release()
             } catch (e: Exception) { }
+        }
+        var bitrate = 0
+        if (durationMs > 0) {
+            val len = runCatching { f.length() }.getOrDefault(0L)
+            if (len > 0) bitrate = (len * 8 / durationMs).toInt()
         }
         return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics)
     }
@@ -1113,7 +1130,7 @@ class MainActivity : Activity() {
             chip.text = "#$g"
             chip.setPadding(dp(12), dp(7), dp(12), dp(7))
             chip.background = pillBg(Color.parseColor("#241638"), 99)
-            chip.setTextColor(Color.parseColor("#D9CFE8"))
+            chip.setTextColor(Color.parseColor("#FF9FB0"))
             val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
             chip.setOnClickListener {
@@ -1161,9 +1178,11 @@ class MainActivity : Activity() {
         nbText.text = label
         nbPlay.text = if (playing) "⏸" else "▶"
         pPlay.text = if (playing) "⏸" else "▶"
-        shufBtn.setTextColor(if (PlayerState.shuffleOn) ACCENT else Color.parseColor("#8D81A3"))
-        repBtn.setTextColor(if (PlayerState.repeatMode > 0) ACCENT else Color.parseColor("#8D81A3"))
-        queueInfo.text = if (PlayerState.queueSize > 0) "В очереди: ${PlayerState.queuePos} из ${PlayerState.queueSize}" else ""
+        shufBtn.setTextColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
+        repBtn.text = if (PlayerState.repeatMode == 2) "⟳¹" else "⟳"
+        repBtn.setTextColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
+        queueCounter.text = if (PlayerState.queueSize > 0)
+            "Трек ${PlayerState.queuePos} из ${PlayerState.queueSize}" + (if (PlayerState.shuffleOn) " · шафл" else "") else ""
         if (PlayerState.uri == null) {
             nbCover.setImageResource(0); npCover.setImageResource(0)
             bigCoverUri = null; lastPlayerUri = null
