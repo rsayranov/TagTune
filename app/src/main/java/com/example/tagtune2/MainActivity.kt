@@ -8,8 +8,12 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -39,6 +43,110 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
+
+/* ---------- собственный набор пиктограмм: единый штрих, без эмодзи ---------- */
+class IconView(context: Context) : View(context) {
+    var icon: String = "play"
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    fun setColor(color: Int) { paint.color = color; invalidate() }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val s = minOf(width, height).toFloat()
+        if (s <= 0f) return
+        val c = width / 2f; val cy = height / 2f
+        paint.strokeWidth = s * 0.11f
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+        when (icon) {
+            "play" -> {
+                paint.style = Paint.Style.FILL
+                val p = Path()
+                p.moveTo(c - s * 0.16f, cy - s * 0.26f); p.lineTo(c - s * 0.16f, cy + s * 0.26f); p.lineTo(c + s * 0.30f, cy); p.close()
+                canvas.drawPath(p, paint)
+            }
+            "pause" -> {
+                paint.style = Paint.Style.FILL
+                canvas.drawRoundRect(RectF(c - s * 0.22f, cy - s * 0.26f, c - s * 0.08f, cy + s * 0.26f), s * 0.05f, s * 0.05f, paint)
+                canvas.drawRoundRect(RectF(c + s * 0.08f, cy - s * 0.26f, c + s * 0.22f, cy + s * 0.26f), s * 0.05f, s * 0.05f, paint)
+            }
+            "prev" -> {
+                paint.style = Paint.Style.FILL
+                canvas.drawRoundRect(RectF(c - s * 0.30f, cy - s * 0.24f, c - s * 0.22f, cy + s * 0.24f), s * 0.04f, s * 0.04f, paint)
+                val p = Path()
+                p.moveTo(c + s * 0.26f, cy - s * 0.24f); p.lineTo(c + s * 0.26f, cy + s * 0.24f); p.lineTo(c - s * 0.12f, cy); p.close()
+                canvas.drawPath(p, paint)
+            }
+            "next" -> {
+                paint.style = Paint.Style.FILL
+                canvas.drawRoundRect(RectF(c + s * 0.22f, cy - s * 0.24f, c + s * 0.30f, cy + s * 0.24f), s * 0.04f, s * 0.04f, paint)
+                val p = Path()
+                p.moveTo(c - s * 0.26f, cy - s * 0.24f); p.lineTo(c - s * 0.26f, cy + s * 0.24f); p.lineTo(c + s * 0.12f, cy); p.close()
+                canvas.drawPath(p, paint)
+            }
+            "shuffle" -> {
+                paint.style = Paint.Style.STROKE
+                val p = Path()
+                p.moveTo(c - s * 0.28f, cy - s * 0.16f); p.lineTo(c - s * 0.06f, cy - s * 0.16f); p.lineTo(c + s * 0.06f, cy + s * 0.16f); p.lineTo(c + s * 0.16f, cy + s * 0.16f)
+                p.moveTo(c - s * 0.28f, cy + s * 0.16f); p.lineTo(c - s * 0.06f, cy + s * 0.16f); p.lineTo(c + s * 0.06f, cy - s * 0.16f); p.lineTo(c + s * 0.16f, cy - s * 0.16f)
+                canvas.drawPath(p, paint)
+                arrowHead(canvas, c + s * 0.24f, cy + s * 0.16f, 1f, 0f, s)
+                arrowHead(canvas, c + s * 0.24f, cy - s * 0.16f, 1f, 0f, s)
+            }
+            "repeat", "repeat1" -> {
+                paint.style = Paint.Style.STROKE
+                val r = RectF(c - s * 0.24f, cy - s * 0.20f, c + s * 0.24f, cy + s * 0.20f)
+                canvas.drawArc(r, 30f, 300f, false, paint)
+                val ex = c + s * 0.24f * 0.866f; val ey = cy - s * 0.20f * 0.5f
+                paint.style = Paint.Style.FILL
+                arrowHead(canvas, ex, ey, 0.5f, 0.866f, s)
+                if (icon == "repeat1") {
+                    paint.textSize = s * 0.30f
+                    paint.textAlign = Paint.Align.CENTER
+                    canvas.drawText("1", c, cy + s * 0.10f, paint)
+                    paint.textAlign = Paint.Align.LEFT
+                }
+            }
+            "queue" -> {
+                paint.style = Paint.Style.STROKE
+                canvas.drawLine(c - s * 0.26f, cy - s * 0.18f, c + s * 0.26f, cy - s * 0.18f, paint)
+                canvas.drawLine(c - s * 0.26f, cy, c + s * 0.26f, cy, paint)
+                canvas.drawLine(c - s * 0.26f, cy + s * 0.18f, c + s * 0.10f, cy + s * 0.18f, paint)
+                paint.style = Paint.Style.FILL
+                val p = Path()
+                p.moveTo(c + s * 0.16f, cy + s * 0.10f); p.lineTo(c + s * 0.16f, cy + s * 0.26f); p.lineTo(c + s * 0.30f, cy + s * 0.18f); p.close()
+                canvas.drawPath(p, paint)
+            }
+            "lyrics" -> {
+                paint.style = Paint.Style.STROKE
+                canvas.drawLine(c - s * 0.26f, cy - s * 0.24f, c + s * 0.26f, cy - s * 0.24f, paint)
+                canvas.drawLine(c - s * 0.26f, cy - s * 0.08f, c + s * 0.26f, cy - s * 0.08f, paint)
+                canvas.drawLine(c - s * 0.26f, cy + s * 0.08f, c + s * 0.26f, cy + s * 0.08f, paint)
+                canvas.drawLine(c - s * 0.26f, cy + s * 0.24f, c + s * 0.06f, cy + s * 0.24f, paint)
+            }
+            "tags" -> {
+                paint.style = Paint.Style.STROKE
+                canvas.drawLine(c - s * 0.10f, cy - s * 0.26f, c - s * 0.16f, cy + s * 0.26f, paint)
+                canvas.drawLine(c + s * 0.12f, cy - s * 0.26f, c + s * 0.06f, cy + s * 0.26f, paint)
+                canvas.drawLine(c - s * 0.26f, cy - s * 0.10f, c + s * 0.26f, cy - s * 0.10f, paint)
+                canvas.drawLine(c - s * 0.26f, cy + s * 0.10f, c + s * 0.26f, cy + s * 0.10f, paint)
+            }
+        }
+    }
+
+    private fun arrowHead(canvas: Canvas, x: Float, y: Float, dx: Float, dy: Float, s: Float) {
+        val st = paint.style
+        paint.style = Paint.Style.FILL
+        val p = Path()
+        p.moveTo(x + dx * s * 0.10f, y + dy * s * 0.10f)
+        p.lineTo(x - dy * s * 0.07f, y + dx * s * 0.07f)
+        p.lineTo(x + dy * s * 0.07f, y - dx * s * 0.07f)
+        p.close()
+        canvas.drawPath(p, paint)
+        paint.style = st
+    }
+}
 
 /* ---------- потоковая раскладка: перенос по строкам, опционально по центру ---------- */
 class FlowLayout(context: Context) : ViewGroup(context) {
@@ -227,6 +335,7 @@ class MainActivity : Activity() {
     private val REQ_TREE = 202
     private val ACCENT = Color.parseColor("#FF4D6D")
     private val GRAY = Color.parseColor("#8D81A3")
+    private val WHITE = Color.parseColor("#EEEEF5")
     private val PAUSE_GLYPH = "‖"
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
@@ -246,9 +355,14 @@ class MainActivity : Activity() {
     private lateinit var seekBar: SeekBar
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
-    private lateinit var pPlay: Button
-    private lateinit var shufBtn: TextView
-    private lateinit var repBtn: TextView
+    private lateinit var shufI: IconView
+    private lateinit var prevI: IconView
+    private lateinit var playI: IconView
+    private lateinit var nextI: IconView
+    private lateinit var repI: IconView
+    private lateinit var queueI: IconView
+    private lateinit var lyricsI: IconView
+    private lateinit var tagsI: IconView
     private lateinit var queueCounter: TextView
 
     data class Track(
@@ -382,7 +496,7 @@ class MainActivity : Activity() {
 
         val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
         val headTitle = TextView(this); headTitle.text = "Медиатека"
-        headTitle.textSize = 26f; headTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        headTitle.textSize = 26f; headTitle.setTextColor(WHITE)
         topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val settingsBtn = Button(this); settingsBtn.text = "⚙"
         settingsBtn.setOnClickListener { showSettings() }
@@ -408,7 +522,7 @@ class MainActivity : Activity() {
         nbCover.setBackgroundColor(Color.parseColor("#2A2A3A"))
         nowBar.addView(nbCover, LinearLayout.LayoutParams(dp(46), dp(46)))
         nbText = TextView(this); nbText.text = "Ничего не играет"
-        nbText.setTextColor(Color.parseColor("#EEEEF5")); nbText.maxLines = 2
+        nbText.setTextColor(WHITE); nbText.maxLines = 2
         nbText.setPadding(dp(10), 0, 0, 0)
         nowBar.addView(nbText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         nbPlay = Button(this); nbPlay.text = "▶"
@@ -430,7 +544,7 @@ class MainActivity : Activity() {
         val pTop = LinearLayout(this); pTop.orientation = LinearLayout.HORIZONTAL
         pTop.gravity = android.view.Gravity.CENTER_VERTICAL
         val pBack = TextView(this); pBack.text = "←"; pBack.textSize = 20f
-        pBack.setTextColor(Color.parseColor("#EEEEF5"))
+        pBack.setTextColor(WHITE)
         pBack.gravity = android.view.Gravity.CENTER
         pBack.background = pillBg(Color.parseColor("#241638"), 99)
         pBack.setPadding(dp(14), dp(8), dp(14), dp(8))
@@ -462,7 +576,7 @@ class MainActivity : Activity() {
         playerScreen.addView(npCover)
 
         pTitle = TextView(this); pTitle.text = "Ничего не играет"
-        pTitle.textSize = 22f; pTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        pTitle.textSize = 22f; pTitle.setTextColor(WHITE)
         pTitle.gravity = android.view.Gravity.CENTER
         pTitle.setPadding(0, dp(12), 0, 0)
         playerScreen.addView(pTitle)
@@ -474,14 +588,6 @@ class MainActivity : Activity() {
         pAlbum = TextView(this); pAlbum.setTextColor(Color.parseColor("#9A93A8"))
         pAlbum.textSize = 15f; pAlbum.gravity = android.view.Gravity.CENTER
         playerScreen.addView(pAlbum)
-
-        val fmtRow = LinearLayout(this); fmtRow.orientation = LinearLayout.HORIZONTAL
-        fmtRow.gravity = android.view.Gravity.CENTER
-        fmtRow.setPadding(0, dp(8), 0, 0)
-        pFormat = TextView(this); pFormat.textSize = 13f
-        pFormat.setTextColor(Color.parseColor("#9A93A8"))
-        fmtRow.addView(pFormat)
-        playerScreen.addView(fmtRow)
 
         pTagsFlow = FlowLayout(this)
         pTagsFlow.maxRows = 2
@@ -505,63 +611,59 @@ class MainActivity : Activity() {
         })
         playerScreen.addView(seekBar)
 
+        /* время + формат на одной линии */
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
+        times.gravity = android.view.Gravity.CENTER_VERTICAL
         tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
-        val timeSpacer = TextView(this)
+        tCur.gravity = android.view.Gravity.START
+        pFormat = TextView(this); pFormat.textSize = 12f
+        pFormat.setTextColor(Color.parseColor("#9A93A8"))
+        pFormat.gravity = android.view.Gravity.CENTER
+        pFormat.setPadding(dp(6), 0, dp(6), 0)
         tDur = TextView(this); tDur.text = "0:00"; tDur.setTextColor(Color.parseColor("#9A93A8"))
-        times.addView(tCur); times.addView(timeSpacer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)); times.addView(tDur)
+        tDur.gravity = android.view.Gravity.END
+        times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        times.addView(pFormat, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
+        /* транспорт: единый рисованный стиль */
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
-        transport.setPadding(0, dp(10), 0, 0)
-        shufBtn = TextView(this); shufBtn.text = "⇆"; shufBtn.textSize = 22f
-        shufBtn.gravity = android.view.Gravity.CENTER
-        shufBtn.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
-        transport.addView(shufBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val prevBtn = TextView(this); prevBtn.text = "⏮"; prevBtn.textSize = 24f
-        prevBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        prevBtn.gravity = android.view.Gravity.CENTER
-        prevBtn.setOnClickListener { PlayerService.cmd(this, "prev") }
-        transport.addView(prevBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        pPlay = Button(this); pPlay.text = "▶"
-        pPlay.setTextColor(Color.WHITE); pPlay.textSize = 22f
-        pPlay.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(ACCENT, Color.parseColor("#7C4DFF"))).apply { shape = GradientDrawable.OVAL }
-        pPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        transport.setPadding(0, dp(8), 0, 0)
+        shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
+        shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
+        transport.addView(shufI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        prevI = IconView(this); prevI.icon = "prev"; prevI.setColor(WHITE)
+        prevI.setOnClickListener { PlayerService.cmd(this, "prev") }
+        transport.addView(prevI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        playI = IconView(this); playI.icon = "play"; playI.setColor(WHITE)
+        playI.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(ACCENT, Color.parseColor("#7C4DFF"))).apply { shape = GradientDrawable.OVAL }
+        playI.setOnClickListener { PlayerService.cmd(this, "toggle") }
         val playLp = LinearLayout.LayoutParams(dp(76), dp(76))
         playLp.setMargins(dp(10), 0, dp(10), 0)
-        transport.addView(pPlay, playLp)
-        val nextBtn = TextView(this); nextBtn.text = "⏭"; nextBtn.textSize = 24f
-        nextBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        nextBtn.gravity = android.view.Gravity.CENTER
-        nextBtn.setOnClickListener { PlayerService.cmd(this, "next") }
-        transport.addView(nextBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        repBtn = TextView(this); repBtn.text = "⟳"; repBtn.textSize = 22f
-        repBtn.gravity = android.view.Gravity.CENTER
-        repBtn.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
-        transport.addView(repBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        transport.addView(playI, playLp)
+        nextI = IconView(this); nextI.icon = "next"; nextI.setColor(WHITE)
+        nextI.setOnClickListener { PlayerService.cmd(this, "next") }
+        transport.addView(nextI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        repI = IconView(this); repI.icon = "repeat"; repI.setColor(GRAY)
+        repI.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
+        transport.addView(repI, LinearLayout.LayoutParams(0, dp(40), 1f))
         playerScreen.addView(transport)
 
+        /* низ: три пиктограммы в том же стиле */
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
-        extraRow.setPadding(0, dp(14), 0, 0)
-        val qBtn = Button(this); qBtn.text = "Список"; qBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        qBtn.isAllCaps = false; qBtn.textSize = 14f
-        qBtn.background = pillBg(Color.parseColor("#241638"), 12)
-        qBtn.setOnClickListener { openQueueDialog() }
-        val qLp = LinearLayout.LayoutParams(0, dp(44), 1f); qLp.setMargins(dp(3), 0, dp(3), 0)
-        extraRow.addView(qBtn, qLp)
-        val lBtn = Button(this); lBtn.text = "Текст"; lBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        lBtn.isAllCaps = false; lBtn.textSize = 14f
-        lBtn.background = pillBg(Color.parseColor("#241638"), 12)
-        lBtn.setOnClickListener { openLyricsDialog() }
-        val lLp = LinearLayout.LayoutParams(0, dp(44), 1f); lLp.setMargins(dp(3), 0, dp(3), 0)
-        extraRow.addView(lBtn, lLp)
-        val tgBtn = Button(this); tgBtn.text = "Теги"; tgBtn.setTextColor(Color.parseColor("#EEEEF5"))
-        tgBtn.isAllCaps = false; tgBtn.textSize = 14f
-        tgBtn.background = pillBg(Color.parseColor("#241638"), 12)
-        tgBtn.setOnClickListener { curTrack()?.let { openEditor(it) } }
-        val tLp = LinearLayout.LayoutParams(0, dp(44), 1f); tLp.setMargins(dp(3), 0, dp(3), 0)
-        extraRow.addView(tgBtn, tLp)
+        extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
+        extraRow.setPadding(0, dp(10), 0, 0)
+        queueI = IconView(this); queueI.icon = "queue"; queueI.setColor(WHITE)
+        queueI.setOnClickListener { openQueueDialog() }
+        extraRow.addView(queueI, LinearLayout.LayoutParams(0, dp(34), 1f))
+        lyricsI = IconView(this); lyricsI.icon = "lyrics"; lyricsI.setColor(WHITE)
+        lyricsI.setOnClickListener { openLyricsDialog() }
+        extraRow.addView(lyricsI, LinearLayout.LayoutParams(0, dp(34), 1f))
+        tagsI = IconView(this); tagsI.icon = "tags"; tagsI.setColor(WHITE)
+        tagsI.setOnClickListener { curTrack()?.let { openEditor(it) } }
+        extraRow.addView(tagsI, LinearLayout.LayoutParams(0, dp(34), 1f))
         playerScreen.addView(extraRow)
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
@@ -576,7 +678,7 @@ class MainActivity : Activity() {
         sBack.setOnClickListener { showLibrary() }
         settingsScreen.addView(sBack)
         val sTitle = TextView(this); sTitle.text = "⚙ Настройки"
-        sTitle.textSize = 20f; sTitle.setTextColor(Color.parseColor("#EEEEF5"))
+        sTitle.textSize = 20f; sTitle.setTextColor(WHITE)
         sTitle.setPadding(0, dp(8), 0, dp(8))
         settingsScreen.addView(sTitle)
         val sLabel = TextView(this); sLabel.text = "Папки с музыкой:"
@@ -653,7 +755,7 @@ class MainActivity : Activity() {
             val row = TextView(this)
             val isCur = pos + 1 == PlayerState.queuePos
             row.text = "${pos + 1}. ${q.title} — ${q.artist}" + (if (isCur) "  ▶" else "")
-            row.setTextColor(if (isCur) ACCENT else Color.parseColor("#EEEEF5"))
+            row.setTextColor(if (isCur) ACCENT else WHITE)
             row.setPadding(dp(6), dp(10), dp(6), dp(10))
             row.setOnClickListener { PlayerService.cmd(this, "play", ArrayList(items), pos) }
             box.addView(row)
@@ -669,7 +771,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         val tv = TextView(this)
         tv.text = curTrack()?.lyrics ?: "Текст не найден в метаданных файла."
-        tv.setTextColor(Color.parseColor("#EEEEF5"))
+        tv.setTextColor(WHITE)
         tv.setPadding(dp(16), dp(8), dp(16), dp(16))
         tv.setLineSpacing(dp(4).toFloat(), 1f)
         scroll.addView(tv)
@@ -692,7 +794,7 @@ class MainActivity : Activity() {
             val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
             val name = DocumentFile.fromTreeUri(this, Uri.parse(u))?.name ?: u
             val tv = TextView(this); tv.text = "📁 $name"
-            tv.setTextColor(Color.parseColor("#EEEEF5"))
+            tv.setTextColor(WHITE)
             tv.setPadding(0, dp(6), 0, dp(6))
             row.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             val del = Button(this); del.text = "✕"
@@ -864,7 +966,7 @@ class MainActivity : Activity() {
             row.setPadding(dp(16), dp(18), dp(16), dp(18))
             row.setBackgroundColor(Color.parseColor("#1E1E2A"))
             val t1 = TextView(this); t1.text = lbl
-            t1.textSize = 19f; t1.setTextColor(Color.parseColor("#EEEEF5"))
+            t1.textSize = 19f; t1.setTextColor(WHITE)
             val t2 = TextView(this); t2.text = sub
             t2.setTextColor(Color.parseColor("#BBBBCC"))
             t2.setPadding(0, dp(4), 0, 0)
@@ -907,7 +1009,7 @@ class MainActivity : Activity() {
             row.text = "$icon $name  (${list.size})"
             row.setPadding(dp(12), dp(12), dp(12), dp(12))
             row.setBackgroundColor(Color.parseColor("#1E1E2A"))
-            row.setTextColor(Color.parseColor("#EEEEF5"))
+            row.setTextColor(WHITE)
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
             row.tag = "group"
@@ -1003,7 +1105,7 @@ class MainActivity : Activity() {
         txt.text = "🎵 ${t.title}\n👤 ${t.artist} · 💿 ${t.album}\n🏷 " +
             (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" }) + " · ⏱ ${fmt(t.durationMs)}"
         txt.setPadding(dp(10), dp(2), 0, dp(2))
-        txt.setTextColor(Color.parseColor("#EEEEF5"))
+        txt.setTextColor(WHITE)
         rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -1144,8 +1246,8 @@ class MainActivity : Activity() {
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
-        pFormat.text = if (t != null && t.bitrateKbps > 0) "MP3 · ${t.bitrateKbps} kbps · ${fmt(t.durationMs)}"
-                       else if (t != null) "MP3 · ${fmt(t.durationMs)}" else ""
+        pFormat.text = if (t != null && t.bitrateKbps > 0) "MP3 · ${t.bitrateKbps} kbps"
+                       else if (t != null) "MP3" else ""
         pTagsFlow.removeAllViews()
         val tags = t?.tags ?: emptyList()
         for (g in tags) {
@@ -1153,7 +1255,7 @@ class MainActivity : Activity() {
             chip.text = "#$g"
             chip.setPadding(dp(12), dp(7), dp(12), dp(7))
             chip.background = pillBg(Color.parseColor("#241638"), 99)
-            chip.setTextColor(Color.parseColor("#FF9FB0"))
+            chip.setTextColor(Color.WHITE)
             val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
             chip.setOnClickListener {
@@ -1200,10 +1302,10 @@ class MainActivity : Activity() {
         }
         nbText.text = label
         nbPlay.text = if (playing) PAUSE_GLYPH else "▶"
-        pPlay.text = if (playing) PAUSE_GLYPH else "▶"
-        shufBtn.setTextColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
-        repBtn.text = if (PlayerState.repeatMode == 2) "⟳¹" else "⟳"
-        repBtn.setTextColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
+        playI.icon = if (playing) "pause" else "play"
+        shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
+        repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
+        repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
         queueCounter.text = if (PlayerState.queueSize > 0)
             "Трек ${PlayerState.queuePos} из ${PlayerState.queueSize}" + (if (PlayerState.shuffleOn) " · шафл" else "") else ""
         if (PlayerState.uri == null) {
