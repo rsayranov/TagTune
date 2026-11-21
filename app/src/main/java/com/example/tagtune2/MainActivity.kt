@@ -44,7 +44,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
 
-/* ---------- собственный набор пиктограмм: единый штрих, без эмодзи ---------- */
+/* ---------- собственный набор пиктограмм в оптике референса ---------- */
 class IconView(context: Context) : View(context) {
     var icon: String = "play"
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -53,17 +53,23 @@ class IconView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val s = minOf(width, height).toFloat()
+        var s = minOf(width, height).toFloat()
         if (s <= 0f) return
+        s *= when (icon) {
+            "shuffle", "shuffleOff", "repeat", "repeat1" -> 0.80f
+            "prev", "next" -> 0.92f
+            "queue", "lyrics", "tags" -> 0.85f
+            else -> 1f
+        }
         val c = width / 2f; val cy = height / 2f
-        paint.strokeWidth = s * 0.11f
+        paint.strokeWidth = s * 0.10f
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
         when (icon) {
             "play" -> {
                 paint.style = Paint.Style.FILL
                 val p = Path()
-                p.moveTo(c - s * 0.16f, cy - s * 0.26f); p.lineTo(c - s * 0.16f, cy + s * 0.26f); p.lineTo(c + s * 0.30f, cy); p.close()
+                p.moveTo(c - s * 0.14f, cy - s * 0.26f); p.lineTo(c - s * 0.14f, cy + s * 0.26f); p.lineTo(c + s * 0.32f, cy); p.close()
                 canvas.drawPath(p, paint)
             }
             "pause" -> {
@@ -73,36 +79,36 @@ class IconView(context: Context) : View(context) {
             }
             "prev" -> {
                 paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c - s * 0.30f, cy - s * 0.24f, c - s * 0.22f, cy + s * 0.24f), s * 0.04f, s * 0.04f, paint)
+                canvas.drawRoundRect(RectF(c - s * 0.32f, cy - s * 0.26f, c - s * 0.24f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
                 val p = Path()
-                p.moveTo(c + s * 0.26f, cy - s * 0.24f); p.lineTo(c + s * 0.26f, cy + s * 0.24f); p.lineTo(c - s * 0.12f, cy); p.close()
+                p.moveTo(c + s * 0.30f, cy - s * 0.26f); p.lineTo(c + s * 0.30f, cy + s * 0.26f); p.lineTo(c - s * 0.10f, cy); p.close()
                 canvas.drawPath(p, paint)
             }
             "next" -> {
                 paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c + s * 0.22f, cy - s * 0.24f, c + s * 0.30f, cy + s * 0.24f), s * 0.04f, s * 0.04f, paint)
+                canvas.drawRoundRect(RectF(c + s * 0.24f, cy - s * 0.26f, c + s * 0.32f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
                 val p = Path()
-                p.moveTo(c - s * 0.26f, cy - s * 0.24f); p.lineTo(c - s * 0.26f, cy + s * 0.24f); p.lineTo(c + s * 0.12f, cy); p.close()
+                p.moveTo(c - s * 0.30f, cy - s * 0.26f); p.lineTo(c - s * 0.30f, cy + s * 0.26f); p.lineTo(c + s * 0.10f, cy); p.close()
                 canvas.drawPath(p, paint)
             }
-            "shuffle" -> {
+            "shuffle", "shuffleOff" -> {
                 paint.style = Paint.Style.STROKE
                 val p = Path()
-                p.moveTo(c - s * 0.28f, cy - s * 0.16f); p.lineTo(c - s * 0.06f, cy - s * 0.16f); p.lineTo(c + s * 0.06f, cy + s * 0.16f); p.lineTo(c + s * 0.16f, cy + s * 0.16f)
-                p.moveTo(c - s * 0.28f, cy + s * 0.16f); p.lineTo(c - s * 0.06f, cy + s * 0.16f); p.lineTo(c + s * 0.06f, cy - s * 0.16f); p.lineTo(c + s * 0.16f, cy - s * 0.16f)
+                p.moveTo(c - s * 0.30f, cy - s * 0.18f); p.lineTo(c - s * 0.10f, cy - s * 0.18f); p.lineTo(c + s * 0.10f, cy + s * 0.18f); p.lineTo(c + s * 0.18f, cy + s * 0.18f)
+                p.moveTo(c - s * 0.30f, cy + s * 0.18f); p.lineTo(c - s * 0.10f, cy + s * 0.18f); p.lineTo(c + s * 0.10f, cy - s * 0.18f); p.lineTo(c + s * 0.18f, cy - s * 0.18f)
                 canvas.drawPath(p, paint)
-                arrowHead(canvas, c + s * 0.24f, cy + s * 0.16f, 1f, 0f, s)
-                arrowHead(canvas, c + s * 0.24f, cy - s * 0.16f, 1f, 0f, s)
+                arrowHead(canvas, c + s * 0.26f, cy + s * 0.18f, 1f, 0f, s)
+                arrowHead(canvas, c + s * 0.26f, cy - s * 0.18f, 1f, 0f, s)
+                if (icon == "shuffleOff") canvas.drawLine(c - s * 0.32f, cy - s * 0.32f, c + s * 0.32f, cy + s * 0.32f, paint)
             }
             "repeat", "repeat1" -> {
                 paint.style = Paint.Style.STROKE
-                val r = RectF(c - s * 0.24f, cy - s * 0.20f, c + s * 0.24f, cy + s * 0.20f)
+                val r = RectF(c - s * 0.26f, cy - s * 0.18f, c + s * 0.26f, cy + s * 0.18f)
                 canvas.drawArc(r, 30f, 300f, false, paint)
-                val ex = c + s * 0.24f * 0.866f; val ey = cy - s * 0.20f * 0.5f
                 paint.style = Paint.Style.FILL
-                arrowHead(canvas, ex, ey, 0.5f, 0.866f, s)
+                arrowHead(canvas, c + s * 0.225f, cy - s * 0.09f, 0.5f, 0.866f, s)
                 if (icon == "repeat1") {
-                    paint.textSize = s * 0.30f
+                    paint.textSize = s * 0.28f
                     paint.textAlign = Paint.Align.CENTER
                     canvas.drawText("1", c, cy + s * 0.10f, paint)
                     paint.textAlign = Paint.Align.LEFT
@@ -627,31 +633,31 @@ class MainActivity : Activity() {
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
-        /* транспорт: единый рисованный стиль */
+        /* транспорт в оптике референса: плоский круг, крупные стрелки, тонкие режимы */
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(8), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
         shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
-        transport.addView(shufI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(shufI, LinearLayout.LayoutParams(0, dp(44), 1f))
         prevI = IconView(this); prevI.icon = "prev"; prevI.setColor(WHITE)
         prevI.setOnClickListener { PlayerService.cmd(this, "prev") }
-        transport.addView(prevI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(prevI, LinearLayout.LayoutParams(0, dp(44), 1f))
         playI = IconView(this); playI.icon = "play"; playI.setColor(WHITE)
-        playI.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(ACCENT, Color.parseColor("#7C4DFF"))).apply { shape = GradientDrawable.OVAL }
+        playI.background = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
         playI.setOnClickListener { PlayerService.cmd(this, "toggle") }
-        val playLp = LinearLayout.LayoutParams(dp(76), dp(76))
-        playLp.setMargins(dp(10), 0, dp(10), 0)
+        val playLp = LinearLayout.LayoutParams(dp(78), dp(78))
+        playLp.setMargins(dp(12), 0, dp(12), 0)
         transport.addView(playI, playLp)
         nextI = IconView(this); nextI.icon = "next"; nextI.setColor(WHITE)
         nextI.setOnClickListener { PlayerService.cmd(this, "next") }
-        transport.addView(nextI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(nextI, LinearLayout.LayoutParams(0, dp(44), 1f))
         repI = IconView(this); repI.icon = "repeat"; repI.setColor(GRAY)
         repI.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
-        transport.addView(repI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(repI, LinearLayout.LayoutParams(0, dp(44), 1f))
         playerScreen.addView(transport)
 
-        /* низ: три пиктограммы в том же стиле */
+        /* низ: три пиктограммы (ждут твоих пояснений по дизайну) */
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
         extraRow.setPadding(0, dp(10), 0, 0)
@@ -1303,6 +1309,7 @@ class MainActivity : Activity() {
         nbText.text = label
         nbPlay.text = if (playing) PAUSE_GLYPH else "▶"
         playI.icon = if (playing) "pause" else "play"
+        shufI.icon = if (PlayerState.shuffleOn) "shuffle" else "shuffleOff"
         shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
         repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
         repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
