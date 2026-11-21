@@ -12,6 +12,7 @@ import android.graphics.ColorFilter
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
@@ -21,6 +22,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.LruCache
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -252,7 +255,7 @@ class MainActivity : Activity() {
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
     private val PAUSE_GLYPH = "‖"
-    private val BUBBLE_BG = Color.argb(128, 160, 160, 160)
+    private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -267,6 +270,7 @@ class MainActivity : Activity() {
     private lateinit var pArtist: TextView
     private lateinit var pAlbum: TextView
     private lateinit var pFormat: TextView
+    private lateinit var pBitrate: TextView
     private lateinit var tagsScroll: HorizontalScrollView
     private lateinit var tagsRow: LinearLayout
     private lateinit var waveView: WaveformView
@@ -466,7 +470,6 @@ class MainActivity : Activity() {
         val spTop = View(this)
         playerScreen.addView(spTop, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        /* центральная зона: свайпы вверх/вниз/влево/вправо */
         val gestureZone = LinearLayout(this)
         gestureZone.orientation = LinearLayout.VERTICAL
         val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -520,7 +523,9 @@ class MainActivity : Activity() {
         tagsRow = LinearLayout(this); tagsRow.orientation = LinearLayout.HORIZONTAL
         tagsRow.setPadding(dp(6), dp(4), dp(6), 0)
         tagsScroll.addView(tagsRow)
-        gestureZone.addView(tagsScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36)))
+        val tagsLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36))
+        tagsLp.topMargin = dp(12)
+        gestureZone.addView(tagsScroll, tagsLp)
 
         playerScreen.addView(gestureZone)
 
@@ -529,27 +534,35 @@ class MainActivity : Activity() {
             val d = PlayerState.durationMs
             if (d > 0) PlayerService.cmd(this, "seek", seekMs = (f * d).toInt())
         }
-        playerScreen.addView(waveView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
+        val waveLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56))
+        waveLp.topMargin = dp(12)
+        playerScreen.addView(waveView, waveLp)
 
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         times.gravity = android.view.Gravity.CENTER_VERTICAL
         tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
         tCur.gravity = android.view.Gravity.START
+        val fmtGroup = LinearLayout(this); fmtGroup.orientation = LinearLayout.HORIZONTAL
+        fmtGroup.gravity = android.view.Gravity.CENTER
         pFormat = TextView(this); pFormat.textSize = 12f
         pFormat.setTextColor(WHITE)
         pFormat.background = pillBg(BUBBLE_BG, 99)
         pFormat.setPadding(dp(10), dp(4), dp(10), dp(4))
-        pFormat.gravity = android.view.Gravity.CENTER
+        pBitrate = TextView(this); pBitrate.textSize = 12f
+        pBitrate.setTextColor(Color.parseColor("#9A93A8"))
+        pBitrate.setPadding(dp(6), 0, 0, 0)
+        fmtGroup.addView(pFormat)
+        fmtGroup.addView(pBitrate)
         tDur = TextView(this); tDur.text = "0:00"; tDur.setTextColor(Color.parseColor("#9A93A8"))
         tDur.gravity = android.view.Gravity.END
         times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        times.addView(pFormat, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        times.addView(fmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
-        transport.setPadding(0, dp(10), 0, 0)
+        transport.setPadding(0, dp(20), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
         shufI.background = pressCircle()
         shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
@@ -1060,19 +1073,23 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
+    /* ---------- РЕДАКТОР ТЕГОВ: одна живая кнопка, палитра плеера ---------- */
 
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(16), dp(8), dp(16), 0)
-        val info = TextView(this); box.addView(info)
+        val info = TextView(this); info.setTextColor(GRAY); box.addView(info)
 
         val flow = FlowLayout(this)
         box.addView(flow)
 
         val input = MultiAutoCompleteTextView(this)
-        input.hint = "#"; input.threshold = 1
+        input.hint = "#"
+        input.setTextColor(WHITE)
+        input.setHintTextColor(GRAY)
+        input.threshold = 1
+        input.dropDownHeight = dp(220)
         input.setTokenizer(object : MultiAutoCompleteTextView.Tokenizer {
             override fun findTokenStart(text: CharSequence, cursor: Int): Int {
                 var i = cursor
@@ -1088,16 +1105,19 @@ class MainActivity : Activity() {
         })
         box.addView(input)
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(t.title).setView(box)
-            .setPositiveButton("＋ Добавить", null).setNegativeButton("Закрыть", null).create()
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("${t.artist} - ${t.title}")
+            .setView(box)
+            .setPositiveButton("Закрыть", null)
+            .create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.parseColor("#16121C")))
 
         fun refresh() {
             val curT = tracks.find { it.uri == t.uri } ?: t
             flow.removeAllViews()
             if (curT.tags.isEmpty()) {
                 val none = TextView(this); none.text = "тегов нет"
-                none.setTextColor(Color.parseColor("#8D81A3"))
+                none.setTextColor(GRAY)
                 flow.addView(none)
             }
             for (g in curT.tags) {
@@ -1106,7 +1126,8 @@ class MainActivity : Activity() {
                 chip.setPadding(dp(10), dp(8), dp(10), dp(8))
                 val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
                 lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
-                chip.setBackgroundColor(Color.parseColor("#3A2A5A")); chip.setTextColor(Color.WHITE)
+                chip.background = pillBg(BUBBLE_BG, 99)
+                chip.setTextColor(WHITE)
                 chip.setOnClickListener {
                     info.text = "Убираю #$g…"
                     writeTag(t, g, false) { ok, msg ->
@@ -1120,17 +1141,37 @@ class MainActivity : Activity() {
         }
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val tags = input.text.toString().split(Regex("[\\s,]+"))
-                    .map { it.trim().removePrefix("#").lowercase() }.filter { it.isNotEmpty() }.distinct()
-                if (tags.isEmpty()) return@setOnClickListener
-                info.text = "Записываю: " + tags.joinToString(" ") { "#$it" }
-                writeTags(t, tags, true) { ok, msg ->
-                    info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
-                    if (ok) input.setText("")
-                    refresh(); rebuildContent(); refreshNow()
+            val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            btn.isAllCaps = false
+            btn.setTextColor(WHITE)
+            btn.background = pillBg(ACCENT, 99)
+            val blp = btn.layoutParams as LinearLayout.LayoutParams
+            blp.width = LinearLayout.LayoutParams.MATCH_PARENT
+            blp.gravity = android.view.Gravity.CENTER
+            blp.setMargins(dp(16), dp(12), dp(16), dp(8))
+            btn.layoutParams = blp
+            btn.setOnClickListener {
+                if (input.text.toString().isBlank()) {
+                    dialog.dismiss()
+                } else {
+                    val tags = input.text.toString().split(Regex("[\\s,]+"))
+                        .map { it.trim().removePrefix("#").lowercase() }.filter { it.isNotEmpty() }.distinct()
+                    if (tags.isEmpty()) return@setOnClickListener
+                    info.text = "Записываю: " + tags.joinToString(" ") { "#$it" }
+                    writeTags(t, tags, true) { ok, msg ->
+                        info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
+                        if (ok) input.setText("")
+                        refresh(); rebuildContent(); refreshNow()
+                    }
                 }
             }
+            input.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+                override fun afterTextChanged(s: Editable?) {
+                    btn.text = if (s.isNullOrBlank()) "Закрыть" else "Сохранить"
+                }
+            })
         }
         dialog.show(); refresh()
     }
@@ -1181,6 +1222,8 @@ class MainActivity : Activity() {
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
         pFormat.text = if (t != null) "MP3" else ""
+        pBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
+        pBitrate.visibility = if (pBitrate.text.isEmpty()) View.GONE else View.VISIBLE
         tagsRow.removeAllViews()
         val tags = t?.tags ?: emptyList()
         for (g in tags) {
