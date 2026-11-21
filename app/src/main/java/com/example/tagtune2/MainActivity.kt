@@ -2,18 +2,13 @@ package com.example.tagtune2
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -44,118 +39,8 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
 
-/* ---------- собственный набор пиктограмм в оптике референса ---------- */
-class IconView(context: Context) : View(context) {
-    var icon: String = "play"
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    fun setColor(color: Int) { paint.color = color; invalidate() }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        var s = minOf(width, height).toFloat()
-        if (s <= 0f) return
-        s *= when (icon) {
-            "shuffle", "shuffleOff", "repeat", "repeat1" -> 0.80f
-            "prev", "next" -> 0.92f
-            "queue", "lyrics", "tags" -> 0.85f
-            else -> 1f
-        }
-        val c = width / 2f; val cy = height / 2f
-        paint.strokeWidth = s * 0.10f
-        paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeJoin = Paint.Join.ROUND
-        when (icon) {
-            "play" -> {
-                paint.style = Paint.Style.FILL
-                val p = Path()
-                p.moveTo(c - s * 0.14f, cy - s * 0.26f); p.lineTo(c - s * 0.14f, cy + s * 0.26f); p.lineTo(c + s * 0.32f, cy); p.close()
-                canvas.drawPath(p, paint)
-            }
-            "pause" -> {
-                paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c - s * 0.22f, cy - s * 0.26f, c - s * 0.08f, cy + s * 0.26f), s * 0.05f, s * 0.05f, paint)
-                canvas.drawRoundRect(RectF(c + s * 0.08f, cy - s * 0.26f, c + s * 0.22f, cy + s * 0.26f), s * 0.05f, s * 0.05f, paint)
-            }
-            "prev" -> {
-                paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c - s * 0.32f, cy - s * 0.26f, c - s * 0.24f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
-                val p = Path()
-                p.moveTo(c + s * 0.30f, cy - s * 0.26f); p.lineTo(c + s * 0.30f, cy + s * 0.26f); p.lineTo(c - s * 0.10f, cy); p.close()
-                canvas.drawPath(p, paint)
-            }
-            "next" -> {
-                paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c + s * 0.24f, cy - s * 0.26f, c + s * 0.32f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
-                val p = Path()
-                p.moveTo(c - s * 0.30f, cy - s * 0.26f); p.lineTo(c - s * 0.30f, cy + s * 0.26f); p.lineTo(c + s * 0.10f, cy); p.close()
-                canvas.drawPath(p, paint)
-            }
-            "shuffle", "shuffleOff" -> {
-                paint.style = Paint.Style.STROKE
-                val p = Path()
-                p.moveTo(c - s * 0.30f, cy - s * 0.18f); p.lineTo(c - s * 0.10f, cy - s * 0.18f); p.lineTo(c + s * 0.10f, cy + s * 0.18f); p.lineTo(c + s * 0.18f, cy + s * 0.18f)
-                p.moveTo(c - s * 0.30f, cy + s * 0.18f); p.lineTo(c - s * 0.10f, cy + s * 0.18f); p.lineTo(c + s * 0.10f, cy - s * 0.18f); p.lineTo(c + s * 0.18f, cy - s * 0.18f)
-                canvas.drawPath(p, paint)
-                arrowHead(canvas, c + s * 0.26f, cy + s * 0.18f, 1f, 0f, s)
-                arrowHead(canvas, c + s * 0.26f, cy - s * 0.18f, 1f, 0f, s)
-                if (icon == "shuffleOff") canvas.drawLine(c - s * 0.32f, cy - s * 0.32f, c + s * 0.32f, cy + s * 0.32f, paint)
-            }
-            "repeat", "repeat1" -> {
-                paint.style = Paint.Style.STROKE
-                val r = RectF(c - s * 0.26f, cy - s * 0.18f, c + s * 0.26f, cy + s * 0.18f)
-                canvas.drawArc(r, 30f, 300f, false, paint)
-                paint.style = Paint.Style.FILL
-                arrowHead(canvas, c + s * 0.225f, cy - s * 0.09f, 0.5f, 0.866f, s)
-                if (icon == "repeat1") {
-                    paint.textSize = s * 0.28f
-                    paint.textAlign = Paint.Align.CENTER
-                    canvas.drawText("1", c, cy + s * 0.10f, paint)
-                    paint.textAlign = Paint.Align.LEFT
-                }
-            }
-            "queue" -> {
-                paint.style = Paint.Style.STROKE
-                canvas.drawLine(c - s * 0.26f, cy - s * 0.18f, c + s * 0.26f, cy - s * 0.18f, paint)
-                canvas.drawLine(c - s * 0.26f, cy, c + s * 0.26f, cy, paint)
-                canvas.drawLine(c - s * 0.26f, cy + s * 0.18f, c + s * 0.10f, cy + s * 0.18f, paint)
-                paint.style = Paint.Style.FILL
-                val p = Path()
-                p.moveTo(c + s * 0.16f, cy + s * 0.10f); p.lineTo(c + s * 0.16f, cy + s * 0.26f); p.lineTo(c + s * 0.30f, cy + s * 0.18f); p.close()
-                canvas.drawPath(p, paint)
-            }
-            "lyrics" -> {
-                paint.style = Paint.Style.STROKE
-                canvas.drawLine(c - s * 0.26f, cy - s * 0.24f, c + s * 0.26f, cy - s * 0.24f, paint)
-                canvas.drawLine(c - s * 0.26f, cy - s * 0.08f, c + s * 0.26f, cy - s * 0.08f, paint)
-                canvas.drawLine(c - s * 0.26f, cy + s * 0.08f, c + s * 0.26f, cy + s * 0.08f, paint)
-                canvas.drawLine(c - s * 0.26f, cy + s * 0.24f, c + s * 0.06f, cy + s * 0.24f, paint)
-            }
-            "tags" -> {
-                paint.style = Paint.Style.STROKE
-                canvas.drawLine(c - s * 0.10f, cy - s * 0.26f, c - s * 0.16f, cy + s * 0.26f, paint)
-                canvas.drawLine(c + s * 0.12f, cy - s * 0.26f, c + s * 0.06f, cy + s * 0.26f, paint)
-                canvas.drawLine(c - s * 0.26f, cy - s * 0.10f, c + s * 0.26f, cy - s * 0.10f, paint)
-                canvas.drawLine(c - s * 0.26f, cy + s * 0.10f, c + s * 0.26f, cy + s * 0.10f, paint)
-            }
-        }
-    }
-
-    private fun arrowHead(canvas: Canvas, x: Float, y: Float, dx: Float, dy: Float, s: Float) {
-        val st = paint.style
-        paint.style = Paint.Style.FILL
-        val p = Path()
-        p.moveTo(x + dx * s * 0.10f, y + dy * s * 0.10f)
-        p.lineTo(x - dy * s * 0.07f, y + dx * s * 0.07f)
-        p.lineTo(x + dy * s * 0.07f, y - dx * s * 0.07f)
-        p.close()
-        canvas.drawPath(p, paint)
-        paint.style = st
-    }
-}
-
 /* ---------- потоковая раскладка: перенос по строкам, опционально по центру ---------- */
-class FlowLayout(context: Context) : ViewGroup(context) {
+class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
     var centerRows = false
@@ -617,7 +502,6 @@ class MainActivity : Activity() {
         })
         playerScreen.addView(seekBar)
 
-        /* время + формат на одной линии */
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         times.gravity = android.view.Gravity.CENTER_VERTICAL
         tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
@@ -633,7 +517,6 @@ class MainActivity : Activity() {
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
-        /* транспорт в оптике референса: плоский круг, крупные стрелки, тонкие режимы */
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(8), 0, 0)
@@ -657,7 +540,6 @@ class MainActivity : Activity() {
         transport.addView(repI, LinearLayout.LayoutParams(0, dp(44), 1f))
         playerScreen.addView(transport)
 
-        /* низ: три пиктограммы (ждут твоих пояснений по дизайну) */
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
         extraRow.setPadding(0, dp(10), 0, 0)
