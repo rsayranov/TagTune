@@ -517,46 +517,47 @@ class MainActivity : Activity() {
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
-        /* транспорт в оптике YouTube Music: розовый глиф без круга, белые стрелки, тонкие режимы */
+        /* транспорт: лесенка размеров, розовый круг с белым глифом */
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(10), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
         shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
-        transport.addView(shufI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(shufI, LinearLayout.LayoutParams(0, dp(36), 1f))
         prevI = IconView(this); prevI.icon = "prev"; prevI.setColor(WHITE)
         prevI.setOnClickListener { PlayerService.cmd(this, "prev") }
-        transport.addView(prevI, LinearLayout.LayoutParams(0, dp(48), 1f))
-        playI = IconView(this); playI.icon = "play"; playI.setColor(ACCENT)
+        transport.addView(prevI, LinearLayout.LayoutParams(0, dp(44), 1f))
+        playI = IconView(this); playI.icon = "play"; playI.setColor(WHITE)
+        playI.background = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
         playI.setOnClickListener { PlayerService.cmd(this, "toggle") }
-        val playLp = LinearLayout.LayoutParams(dp(64), dp(56))
-        playLp.setMargins(dp(6), 0, dp(6), 0)
+        val playLp = LinearLayout.LayoutParams(dp(64), dp(64))
+        playLp.setMargins(dp(8), 0, dp(8), 0)
         transport.addView(playI, playLp)
         nextI = IconView(this); nextI.icon = "next"; nextI.setColor(WHITE)
         nextI.setOnClickListener { PlayerService.cmd(this, "next") }
-        transport.addView(nextI, LinearLayout.LayoutParams(0, dp(48), 1f))
+        transport.addView(nextI, LinearLayout.LayoutParams(0, dp(44), 1f))
         repI = IconView(this); repI.icon = "repeat"; repI.setColor(GRAY)
         repI.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
-        transport.addView(repI, LinearLayout.LayoutParams(0, dp(40), 1f))
+        transport.addView(repI, LinearLayout.LayoutParams(0, dp(36), 1f))
         playerScreen.addView(transport)
 
-        /* нижний ряд: колонки точно под prev / play / next */
+        /* нижний ряд: опущен ниже, колонки под prev / play / next */
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
-        extraRow.setPadding(0, dp(6), 0, 0)
+        extraRow.setPadding(0, dp(28), 0, 0)
         val sp1 = View(this)
         extraRow.addView(sp1, LinearLayout.LayoutParams(0, dp(40), 1f))
         queueI = IconView(this); queueI.icon = "queue"; queueI.setColor(WHITE)
         queueI.setOnClickListener { openQueueDialog() }
-        extraRow.addView(queueI, LinearLayout.LayoutParams(0, dp(48), 1f))
+        extraRow.addView(queueI, LinearLayout.LayoutParams(0, dp(40), 1f))
         lyricsI = IconView(this); lyricsI.icon = "lyrics"; lyricsI.setColor(WHITE)
         lyricsI.setOnClickListener { openLyricsDialog() }
-        val lyrLp = LinearLayout.LayoutParams(dp(64), dp(56))
-        lyrLp.setMargins(dp(6), 0, dp(6), 0)
+        val lyrLp = LinearLayout.LayoutParams(dp(64), dp(40))
+        lyrLp.setMargins(dp(8), 0, dp(8), 0)
         extraRow.addView(lyricsI, lyrLp)
         tagsI = IconView(this); tagsI.icon = "tags"; tagsI.setColor(WHITE)
         tagsI.setOnClickListener { curTrack()?.let { openEditor(it) } }
-        extraRow.addView(tagsI, LinearLayout.LayoutParams(0, dp(48), 1f))
+        extraRow.addView(tagsI, LinearLayout.LayoutParams(0, dp(40), 1f))
         val sp2 = View(this)
         extraRow.addView(sp2, LinearLayout.LayoutParams(0, dp(40), 1f))
         playerScreen.addView(extraRow)
