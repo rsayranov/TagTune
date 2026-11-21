@@ -2,6 +2,7 @@ package com.example.tagtune2
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.media.AudioFormat
 import android.media.MediaCodec
@@ -15,12 +16,13 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 
+/* ---------- волна: зеркальные бары, быстрое семплирование окон ---------- */
 class WaveformView(context: Context) : View(context) {
 
     private var peaks: FloatArray? = null
     private var progress = 0f
     var onSeek: ((Float) -> Unit)? = null
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun setPeaks(p: FloatArray?) { peaks = p; invalidate() }
     fun setProgress(f: Float) { progress = f.coerceIn(0f, 1f); invalidate() }
@@ -30,22 +32,19 @@ class WaveformView(context: Context) : View(context) {
         val w = width.toFloat(); val h = height.toFloat()
         val p = peaks
         if (p == null || p.isEmpty()) {
-            paint.color = 0xFF3A3A4A.toInt()
-            canvas.drawRect(0f, h / 2 - 1, w, h / 2 + 1, paint)
-            paint.color = 0xFF8D81A3.toInt()
-            paint.textSize = h * 0.22f
-            canvas.drawText("волна строится…", 8f, h / 2 - 6, paint)
+            barPaint.color = Color.parseColor("#3E3B47")
+            canvas.drawRect(0f, h / 2 - 1f, w, h / 2 + 1f, barPaint)
             return
         }
-        val n = p.size; val bw = w / n
+        val n = p.size
+        val slot = w / n
+        val bw = slot * 0.55f
         for (i in 0 until n) {
-            val bh = maxOf(2f, p[i] * (h - 6))
-            val played = (i + 0.5f) / n <= progress
-            paint.color = if (played) 0xFF7C4DFF.toInt() else 0xFF3A3A4A.toInt()
-            canvas.drawRect(i * bw + bw * 0.15f, (h - bh) / 2, i * bw + bw * 0.85f, (h + bh) / 2, paint)
+            val bh = maxOf(2f, p[i] * h * 0.92f)
+            val x = i * slot + (slot - bw) / 2
+            barPaint.color = if ((i + 0.5f) / n <= progress) Color.parseColor("#FF4D6D") else Color.parseColor("#4A4653")
+            canvas.drawRoundRect(x, (h - bh) / 2, x + bw, (h + bh) / 2, bw / 2, bw / 2, barPaint)
         }
-        paint.color = 0xFF37E6FF.toInt()
-        canvas.drawRect(progress * w - 1, 0f, progress * w + 1, h, paint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -59,20 +58,21 @@ class WaveformView(context: Context) : View(context) {
     }
 
     companion object {
-        private val cache = HashMap<String, FloatArray>()
+        private val memCache = HashMap<String, FloatArray>()
 
-        fun getPeaks(ctx: Context, uri: String): FloatArray? {
-            cache[uri]?.let { return it }
-            val f = File(ctx.cacheDir, "wave_" + Integer.toHexString(uri.hashCode()) + ".bin")
+        fun getPeaks(ctx: Context, uri: String, durationMs: Long): FloatArray? {
+            memCache[uri]?.let { return it }
+            val f = File(ctx.cacheDir, "wave2_" + Integer.toHexString(uri.hashCode()) + ".bin")
             if (f.exists()) {
                 try {
                     val fb = ByteBuffer.wrap(f.readBytes()).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
                     val a = FloatArray(fb.remaining()); fb.get(a)
-                    cache[uri] = a; return a
+                    memCache[uri] = a
+                    return a
                 } catch (e: Exception) { }
             }
-            val a = decode(ctx, Uri.parse(uri), 400) ?: return null
-            cache[uri] = a
+            val a = fastPeaks(ctx, Uri.parse(uri), durationMs, 72) ?: return null
+            memCache[uri] = a
             try {
                 val bb = ByteBuffer.allocate(a.size * 4).order(ByteOrder.LITTLE_ENDIAN)
                 a.forEach { bb.putFloat(it) }
@@ -81,7 +81,9 @@ class WaveformView(context: Context) : View(context) {
             return a
         }
 
-        private fun decode(ctx: Context, uri: Uri, buckets: Int): FloatArray? {
+        /* скорость важнее точности: декодируем только короткие окна с прыжками по синк-точкам */
+        private fun fastPeaks(ctx: Context, uri: Uri, durationMs: Long, buckets: Int): FloatArray? {
+            if (durationMs <= 0) return null
             val extractor = MediaExtractor()
             var codec: MediaCodec? = null
             try {
@@ -95,59 +97,58 @@ class WaveformView(context: Context) : View(context) {
                 if (ti < 0 || fmt == null) return null
                 extractor.selectTrack(ti)
                 val mime = fmt.getString(MediaFormat.KEY_MIME)!!
-                val durUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION) else 0L
                 codec = MediaCodec.createDecoderByType(mime)
                 codec.configure(fmt, null, null, 0)
                 codec.start()
-                val peaks = FloatArray(buckets)
-                val chunk = ArrayList<Float>()
+                val out = FloatArray(buckets)
+                val spanUs = durationMs * 1000L / buckets
+                val windowUs = minOf(spanUs, 450_000L)
                 val info = MediaCodec.BufferInfo()
-                var inEos = false; var outEos = false
-                while (!outEos) {
-                    if (!inEos) {
-                        val ii = codec.dequeueInputBuffer(10000)
-                        if (ii >= 0) {
-                            val b = codec.getInputBuffer(ii)!!
-                            val n = extractor.readSampleData(b, 0)
-                            if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inEos = true }
-                            else { codec.queueInputBuffer(ii, 0, n, extractor.sampleTime, 0); extractor.advance() }
-                        }
-                    }
-                    val oi = codec.dequeueOutputBuffer(info, 10000)
-                    if (oi >= 0) {
-                        if (info.size > 0) {
-                            val ob = codec.getOutputBuffer(oi)!!
-                            ob.position(info.offset); ob.limit(info.offset + info.size)
-                            val of = codec.getOutputFormat(oi)
-                            val isFloat = of.containsKey(MediaFormat.KEY_PCM_ENCODING) &&
-                                of.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
-                            val ch = if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) of.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-                            val frames = info.size / ((if (isFloat) 4 else 2) * ch)
-                            var max = 0f
-                            if (isFloat) {
-                                val fb = ob.asFloatBuffer()
-                                for (fr in 0 until frames) for (c in 0 until ch) { val v = abs(fb.get()); if (v > max) max = v }
-                            } else {
-                                val sb = ob.asShortBuffer()
-                                for (fr in 0 until frames) for (c in 0 until ch) { val v = abs(sb.get().toInt()) / 32768f; if (v > max) max = v }
+                for (b in 0 until buckets) {
+                    val tUs = b * spanUs
+                    extractor.seekTo(tUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                    codec.flush()
+                    var max = 0f
+                    var inEos = false
+                    val deadline = tUs + windowUs
+                    var guard = 0
+                    while (guard++ < 64) {
+                        if (!inEos) {
+                            val ii = codec.dequeueInputBuffer(5000)
+                            if (ii >= 0) {
+                                val buf = codec.getInputBuffer(ii)!!
+                                val n = extractor.readSampleData(buf, 0)
+                                if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inEos = true }
+                                else { codec.queueInputBuffer(ii, 0, n, extractor.sampleTime, 0); extractor.advance() }
                             }
-                            if (durUs > 0) {
-                                val bIdx = ((info.presentationTimeUs.toDouble() / durUs) * buckets).toInt().coerceIn(0, buckets - 1)
-                                if (max > peaks[bIdx]) peaks[bIdx] = max
-                            } else chunk.add(max)
                         }
-                        codec.releaseOutputBuffer(oi, false)
-                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outEos = true
+                        val oi = codec.dequeueOutputBuffer(info, 5000)
+                        if (oi >= 0) {
+                            if (info.size > 0 && info.presentationTimeUs in tUs..deadline) {
+                                val ob = codec.getOutputBuffer(oi)!!
+                                ob.position(info.offset); ob.limit(info.offset + info.size)
+                                val of = codec.getOutputFormat(oi)
+                                val isFloat = of.containsKey(MediaFormat.KEY_PCM_ENCODING) &&
+                                    of.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
+                                val ch = if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) of.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+                                val frames = info.size / ((if (isFloat) 4 else 2) * ch)
+                                if (isFloat) {
+                                    val fb2 = ob.asFloatBuffer()
+                                    for (fr in 0 until frames) for (cc in 0 until ch) { val v = abs(fb2.get()); if (v > max) max = v }
+                                } else {
+                                    val sb = ob.asShortBuffer()
+                                    for (fr in 0 until frames) for (cc in 0 until ch) { val v = abs(sb.get().toInt()) / 32768f; if (v > max) max = v }
+                                }
+                            }
+                            codec.releaseOutputBuffer(oi, false)
+                            if (info.presentationTimeUs > deadline || (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+                        }
                     }
+                    out[b] = max
                 }
-                val src = if (durUs > 0) peaks else FloatArray(chunk.size) { chunk[it] }
-                if (src.isEmpty()) return null
-                val out = FloatArray(buckets); var mx = 0f
-                for (i in 0 until buckets) {
-                    val v = src[(i.toLong() * src.size / buckets).toInt().coerceAtMost(src.size - 1)]
-                    out[i] = v; if (v > mx) mx = v
-                }
-                if (mx > 0) for (i in 0 until buckets) out[i] = out[i] / mx
+                var mx = 0f
+                for (v in out) if (v > mx) mx = v
+                if (mx > 0) for (i in 0 until buckets) out[i] = (out[i] / mx).coerceIn(0.06f, 1f)
                 return out
             } catch (e: Exception) {
                 return null
