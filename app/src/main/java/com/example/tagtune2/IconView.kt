@@ -10,6 +10,10 @@ import android.view.View
 /* ---------- пиктограммы в оптике YouTube Music: тонкие режимы, залитые стрелки ---------- */
 class IconView(context: Context) : View(context) {
     var icon: String = "play"
+        set(value) {
+            field = value
+            invalidate()
+        }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun setColor(color: Int) { paint.color = color; invalidate() }
