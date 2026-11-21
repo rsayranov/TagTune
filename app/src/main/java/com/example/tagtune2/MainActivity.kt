@@ -6,8 +6,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.media.MediaMetadataRetriever
@@ -17,11 +22,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
@@ -37,6 +45,20 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
+import kotlin.math.abs
+
+/* ---------- круглый отклик при нажатии: круг по меньшей стороне, не овал ---------- */
+class PressCircleDrawable(private val color: Int) : Drawable() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    init { p.color = color }
+    override fun draw(c: Canvas) {
+        val r = minOf(bounds.width(), bounds.height()) / 2f
+        c.drawCircle(bounds.exactCenterX(), bounds.exactCenterY(), r, p)
+    }
+    override fun setAlpha(alpha: Int) { p.alpha = alpha }
+    override fun setColorFilter(cf: ColorFilter?) { p.colorFilter = cf }
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
 
 /* ---------- потоковая раскладка: перенос по строкам, уважает фиксированную высоту ---------- */
 class FlowLayout(context: android.content.Context) : ViewGroup(context) {
@@ -230,7 +252,7 @@ class MainActivity : Activity() {
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
     private val PAUSE_GLYPH = "‖"
-    private val TAG_BG = Color.argb(128, 255, 77, 109)
+    private val BUBBLE_BG = Color.argb(128, 160, 160, 160)
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -245,7 +267,8 @@ class MainActivity : Activity() {
     private lateinit var pArtist: TextView
     private lateinit var pAlbum: TextView
     private lateinit var pFormat: TextView
-    private lateinit var pTagsFlow: FlowLayout
+    private lateinit var tagsScroll: HorizontalScrollView
+    private lateinit var tagsRow: LinearLayout
     private lateinit var waveView: WaveformView
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
@@ -330,13 +353,10 @@ class MainActivity : Activity() {
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
 
-    /* круг-отклик: прозрачный в покое, акцентный при нажатии */
     private fun pressCircle(): StateListDrawable {
-        val pressed = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
-        val idle = GradientDrawable().apply { setColor(Color.TRANSPARENT); shape = GradientDrawable.OVAL }
         val sld = StateListDrawable()
-        sld.addState(intArrayOf(android.R.attr.state_pressed), pressed)
-        sld.addState(intArrayOf(), idle)
+        sld.addState(intArrayOf(android.R.attr.state_pressed), PressCircleDrawable(ACCENT))
+        sld.addState(intArrayOf(), PressCircleDrawable(Color.TRANSPARENT))
         return sld
     }
 
@@ -437,7 +457,7 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: ПЛЕЕР (центрирован амортизаторами) ---------- */
+        /* ---------- ЭКРАН: ПЛЕЕР ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(10), dp(14), dp(14))
@@ -445,6 +465,26 @@ class MainActivity : Activity() {
 
         val spTop = View(this)
         playerScreen.addView(spTop, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        /* центральная зона: свайпы вверх/вниз/влево/вправо */
+        val gestureZone = LinearLayout(this)
+        gestureZone.orientation = LinearLayout.VERTICAL
+        val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                val dx = e2.x - (e1?.x ?: e2.x)
+                val dy = e2.y - (e1?.y ?: e2.y)
+                if (maxOf(abs(dx), abs(dy)) < dp(40)) return false
+                if (abs(dy) > abs(dx)) {
+                    if (dy < 0) openQueueDialog() else showLibrary()
+                } else {
+                    if (dx < 0) PlayerService.cmd(this@MainActivity, "next")
+                    else PlayerService.cmd(this@MainActivity, "prev")
+                }
+                return true
+            }
+        })
+        gestureZone.setOnTouchListener { _, ev -> gd.onTouchEvent(ev) }
 
         npCover = ImageView(this)
         npCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -459,27 +499,30 @@ class MainActivity : Activity() {
         val covLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, covSize)
         covLp.setMargins(dp(20), dp(6), dp(20), dp(6))
         npCover.layoutParams = covLp
-        playerScreen.addView(npCover)
+        gestureZone.addView(npCover)
 
         pTitle = TextView(this); pTitle.text = "Ничего не играет"
         pTitle.textSize = 22f; pTitle.setTextColor(WHITE)
         pTitle.gravity = android.view.Gravity.CENTER
         pTitle.setPadding(0, dp(12), 0, 0)
-        playerScreen.addView(pTitle)
+        gestureZone.addView(pTitle)
 
         pArtist = TextView(this); pArtist.setTextColor(ACCENT)
         pArtist.textSize = 17f; pArtist.gravity = android.view.Gravity.CENTER
-        playerScreen.addView(pArtist)
+        gestureZone.addView(pArtist)
 
         pAlbum = TextView(this); pAlbum.setTextColor(Color.parseColor("#9A93A8"))
         pAlbum.textSize = 15f; pAlbum.gravity = android.view.Gravity.CENTER
-        playerScreen.addView(pAlbum)
+        gestureZone.addView(pAlbum)
 
-        pTagsFlow = FlowLayout(this)
-        pTagsFlow.maxRows = 2
-        pTagsFlow.centerRows = true
-        pTagsFlow.setPadding(dp(6), dp(10), dp(6), 0)
-        playerScreen.addView(pTagsFlow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(86)))
+        tagsScroll = HorizontalScrollView(this)
+        tagsScroll.isHorizontalScrollBarEnabled = false
+        tagsRow = LinearLayout(this); tagsRow.orientation = LinearLayout.HORIZONTAL
+        tagsRow.setPadding(dp(6), dp(4), dp(6), 0)
+        tagsScroll.addView(tagsRow)
+        gestureZone.addView(tagsScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36)))
+
+        playerScreen.addView(gestureZone)
 
         waveView = WaveformView(this)
         waveView.onSeek = { f ->
@@ -493,9 +536,10 @@ class MainActivity : Activity() {
         tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
         tCur.gravity = android.view.Gravity.START
         pFormat = TextView(this); pFormat.textSize = 12f
-        pFormat.setTextColor(Color.parseColor("#9A93A8"))
+        pFormat.setTextColor(WHITE)
+        pFormat.background = pillBg(BUBBLE_BG, 99)
+        pFormat.setPadding(dp(10), dp(4), dp(10), dp(4))
         pFormat.gravity = android.view.Gravity.CENTER
-        pFormat.setPadding(dp(6), 0, dp(6), 0)
         tDur = TextView(this); tDur.text = "0:00"; tDur.setTextColor(Color.parseColor("#9A93A8"))
         tDur.gravity = android.view.Gravity.END
         times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -1136,33 +1180,23 @@ class MainActivity : Activity() {
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
-        pFormat.text = if (t != null && t.bitrateKbps > 0) "MP3 · ${t.bitrateKbps} kbps"
-                       else if (t != null) "MP3" else ""
-        pTagsFlow.removeAllViews()
+        pFormat.text = if (t != null) "MP3" else ""
+        tagsRow.removeAllViews()
         val tags = t?.tags ?: emptyList()
         for (g in tags) {
             val chip = TextView(this)
             chip.text = "#$g"
-            chip.setPadding(dp(12), dp(7), dp(12), dp(7))
-            chip.background = pillBg(TAG_BG, 99)
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6))
+            chip.background = pillBg(BUBBLE_BG, 99)
             chip.setTextColor(Color.WHITE)
-            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(6), 0); chip.layoutParams = lp
             chip.setOnClickListener {
                 selected.clear(); selected.add(g)
                 currentTab = "tags"; subType = null; subValue = null
                 showLibrary(); rebuildContent()
             }
-            pTagsFlow.addView(chip)
-        }
-        val moreChip = TextView(this)
-        moreChip.text = "…"
-        moreChip.setPadding(dp(10), dp(7), dp(10), dp(7))
-        moreChip.setTextColor(Color.parseColor("#9A93A8"))
-        pTagsFlow.addView(moreChip)
-        pTagsFlow.post {
-            if (pTagsFlow.overflowCount == 0) { moreChip.visibility = View.GONE; pTagsFlow.requestLayout() }
-            else moreChip.text = "+${pTagsFlow.overflowCount}"
+            tagsRow.addView(chip)
         }
         /* быстрая волна: строим в фоне, кэш на диске */
         waveView.setPeaks(null)
