@@ -268,6 +268,10 @@ class MainActivity : Activity() {
     private val WHITE = Color.parseColor("#EEEEF5")
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val HL = Color.argb(51, 255, 77, 109)
+    /* пороги жестов: крутятся одной цифрой */
+    private val SEARCH_PULL_DP = 44
+    private val DISMISS_FLING_DP = 34
+    private val PLAYER_FLING_DP = 40
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -407,7 +411,6 @@ class MainActivity : Activity() {
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
 
-    /* активный трек: акцентная рамка 1dp, без заливки */
     private fun rowBg(active: Boolean): Drawable? =
         if (active) GradientDrawable().apply {
             setColor(Color.TRANSPARENT)
@@ -573,7 +576,7 @@ class MainActivity : Activity() {
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> pullDownY = ev.y
                 MotionEvent.ACTION_MOVE -> {
-                    if (contentScroll.scrollY == 0 && ev.y - pullDownY > dp(90)) {
+                    if (contentScroll.scrollY == 0 && ev.y - pullDownY > dp(SEARCH_PULL_DP)) {
                         if (currentTab == "menu") {
                             if (!scanRunning) startScan()
                         } else if (!searchShown) {
@@ -593,16 +596,16 @@ class MainActivity : Activity() {
             }
         }
 
-        /* ---------- МИНИПЛЕЕР: три строки, play+next в ряд, смахивание на паузе ---------- */
+        /* ---------- МИНИПЛЕЕР: стадион, три строки, play+next в ряд ---------- */
         nbBar = LinearLayout(this)
         nbBar.orientation = LinearLayout.HORIZONTAL
         nbBar.gravity = Gravity.CENTER_VERTICAL
         nbBar.background = GradientDrawable().apply {
             setColor(Color.BLACK)
             setStroke(dp(1), ACCENT)
-            cornerRadius = dp(36).toFloat()
+            cornerRadius = dp(999).toFloat()
         }
-        nbBar.setPadding(dp(12), dp(10), dp(12), dp(10))
+        nbBar.setPadding(dp(14), dp(10), dp(14), dp(10))
 
         val nbGd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
@@ -613,7 +616,7 @@ class MainActivity : Activity() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 val dx = e2.x - (e1?.x ?: e2.x)
                 val dy = e2.y - (e1?.y ?: e2.y)
-                if (!PlayerState.playing && abs(dx) > abs(dy) && abs(dx) > dp(60)) {
+                if (!PlayerState.playing && abs(dx) > abs(dy) && abs(dx) > dp(DISMISS_FLING_DP)) {
                     nbBar.visibility = View.GONE
                     return true
                 }
@@ -683,7 +686,7 @@ class MainActivity : Activity() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 val dx = e2.x - (e1?.x ?: e2.x)
                 val dy = e2.y - (e1?.y ?: e2.y)
-                if (maxOf(abs(dx), abs(dy)) < dp(40)) return false
+                if (maxOf(abs(dx), abs(dy)) < dp(PLAYER_FLING_DP)) return false
                 if (abs(dy) > abs(dx)) {
                     if (dy < 0) openQueueDialog() else showLibrary()
                 } else {
