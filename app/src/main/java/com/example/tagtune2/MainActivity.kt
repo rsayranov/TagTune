@@ -46,6 +46,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
@@ -279,8 +280,14 @@ class MainActivity : Activity() {
     private lateinit var searchInput: EditText
     private lateinit var foldersBox: LinearLayout
     private lateinit var nbCover: ImageView
-    private lateinit var nbText: TextView
-    private lateinit var nbPlay: Button
+    private lateinit var nbLine: TextView
+    private lateinit var nbSeek: SeekBar
+    private lateinit var nbCur: TextView
+    private lateinit var nbDur: TextView
+    private lateinit var nbFormat: TextView
+    private lateinit var nbBitrate: TextView
+    private lateinit var nbPlay: IconView
+    private lateinit var nbNext: IconView
     private lateinit var npCover: ImageView
     private lateinit var pTitle: TextView
     private lateinit var pArtist: TextView
@@ -326,6 +333,7 @@ class MainActivity : Activity() {
     private var searchShown = false
     private var searchQuery = ""
     private var updatingSearch = false
+    private var nbSeeking = false
     private val thumbCache = object : LruCache<String, Bitmap>(80) {}
     private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
@@ -339,7 +347,15 @@ class MainActivity : Activity() {
             if (p != null && PlayerState.uri != null) {
                 val pos = p.currentPosition(); val dur = PlayerState.durationMs
                 tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
-                if (dur > 0) waveView.setProgress(pos.toFloat() / dur)
+                nbCur.text = fmt(pos.toLong()); nbDur.text = fmt(dur.toLong())
+                if (dur > 0) {
+                    waveView.setProgress(pos.toFloat() / dur)
+                    if (!nbSeeking) {
+                        nbSeek.max = dur.toInt() / 1000
+                        nbSeek.progress = pos / 1000
+                    }
+                }
+                if (PlayerState.playing) nbCover.rotation = (nbCover.rotation + 0.5f) % 360f
             }
             handler.postDelayed(this, 100)
         }
@@ -358,7 +374,6 @@ class MainActivity : Activity() {
             t.album.contains(q, true) || t.tags.any { it.contains(q, true) }
     }
 
-    /* маркер совпадений: акцент с 80% прозрачности */
     private fun highlight(text: String): CharSequence {
         val q = searchQuery.trim()
         if (q.isEmpty()) return text
@@ -563,7 +578,6 @@ class MainActivity : Activity() {
         contentScroll.addView(contentBox)
         libScreen.addView(contentScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        /* свайп вниз: в меню — перескан, в подразделах — поиск */
         contentScroll.setOnTouchListener { _, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> pullDownY = ev.y
@@ -580,7 +594,6 @@ class MainActivity : Activity() {
             false
         }
 
-        /* автоподгрузка следующих порций при прокрутке к низу */
         contentScroll.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (visibleLimit < pageTotal &&
                 scrollY + contentScroll.height >= contentBox.height - dp(240)) {
@@ -589,25 +602,96 @@ class MainActivity : Activity() {
             }
         }
 
+        /* ---------- МИНИПЛЕЕР: чёрная плашка, акцентная рамка, круглая вращающаяся обложка ---------- */
         val nowBar = LinearLayout(this)
         nowBar.orientation = LinearLayout.HORIZONTAL
-        nowBar.setBackgroundColor(Color.parseColor("#241638"))
-        nowBar.setPadding(dp(8), dp(8), dp(8), dp(8))
+        nowBar.gravity = Gravity.CENTER_VERTICAL
+        nowBar.background = GradientDrawable().apply {
+            setColor(Color.BLACK)
+            setStroke(dp(2), ACCENT)
+            cornerRadius = dp(16).toFloat()
+        }
+        nowBar.setPadding(dp(10), dp(10), dp(10), dp(10))
         nowBar.setOnClickListener { showPlayer() }
-        nbCover = ImageView(this); nbCover.scaleType = ImageView.ScaleType.CENTER_CROP
+
+        nbCover = ImageView(this)
+        nbCover.scaleType = ImageView.ScaleType.CENTER_CROP
         nbCover.setBackgroundColor(Color.parseColor("#2A2A3A"))
-        nowBar.addView(nbCover, LinearLayout.LayoutParams(dp(46), dp(46)))
-        nbText = TextView(this); nbText.text = "Ничего не играет"
-        nbText.setTextColor(WHITE); nbText.maxLines = 2
-        nbText.setPadding(dp(10), 0, 0, 0)
-        nowBar.addView(nbText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        nbPlay = Button(this); nbPlay.text = "▶"
+        nbCover.clipToOutline = true
+        nbCover.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
+        }
+        nowBar.addView(nbCover, LinearLayout.LayoutParams(dp(72), dp(72)))
+
+        val nbInfo = LinearLayout(this); nbInfo.orientation = LinearLayout.VERTICAL
+        nbInfo.setPadding(dp(10), 0, dp(6), 0)
+
+        val lineHsv = HorizontalScrollView(this)
+        lineHsv.isHorizontalScrollBarEnabled = false
+        lineHsv.setFillViewport(true)
+        nbLine = TextView(this)
+        nbLine.textSize = 13f; nbLine.setTextColor(WHITE)
+        nbLine.setSingleLine(true); nbLine.gravity = Gravity.START
+        nbLine.includeFontPadding = false
+        nbLine.text = "Ничего не играет"
+        lineHsv.addView(nbLine, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START))
+        attachAutoScroll(lineHsv)
+        nbInfo.addView(lineHsv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        nbSeek = SeekBar(this)
+        nbSeek.progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+        nbSeek.thumbTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+        nbSeek.setPadding(dp(4), dp(6), dp(4), 0)
+        nbSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) nbCur.text = fmt(progress * 1000L)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) { nbSeeking = true }
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                nbSeeking = false
+                PlayerService.cmd(this@MainActivity, "seek", seekMs = sb!!.progress * 1000)
+            }
+        })
+        nbInfo.addView(nbSeek, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val nbTimes = LinearLayout(this); nbTimes.orientation = LinearLayout.HORIZONTAL
+        nbTimes.gravity = Gravity.CENTER_VERTICAL
+        nbCur = TextView(this); nbCur.text = "0:00"; nbCur.textSize = 11f
+        nbCur.setTextColor(Color.parseColor("#9A93A8")); nbCur.gravity = Gravity.START
+        val nbFmtGroup = LinearLayout(this); nbFmtGroup.orientation = LinearLayout.HORIZONTAL
+        nbFmtGroup.gravity = Gravity.CENTER
+        nbFormat = TextView(this); nbFormat.textSize = 11f; nbFormat.setTextColor(WHITE)
+        nbFormat.background = pillBg(BUBBLE_BG, 99)
+        nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
+        nbBitrate = TextView(this); nbBitrate.textSize = 11f
+        nbBitrate.setTextColor(Color.parseColor("#9A93A8")); nbBitrate.setPadding(dp(5), 0, 0, 0)
+        nbFmtGroup.addView(nbFormat); nbFmtGroup.addView(nbBitrate)
+        nbDur = TextView(this); nbDur.text = "0:00"; nbDur.textSize = 11f
+        nbDur.setTextColor(Color.parseColor("#9A93A8")); nbDur.gravity = Gravity.END
+        nbTimes.addView(nbCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        nbTimes.addView(nbFmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        nbTimes.addView(nbDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        nbInfo.addView(nbTimes, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        nowBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val nbBtns = LinearLayout(this); nbBtns.orientation = LinearLayout.VERTICAL
+        nbBtns.gravity = Gravity.CENTER
+        nbPlay = IconView(this); nbPlay.icon = "play"; nbPlay.setColor(WHITE)
+        nbPlay.background = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
         nbPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
-        nowBar.addView(nbPlay)
-        val nbOpen = Button(this); nbOpen.text = "⏫"
-        nbOpen.setOnClickListener { showPlayer() }
-        nowBar.addView(nbOpen)
-        libScreen.addView(nowBar)
+        val nbPlayLp = LinearLayout.LayoutParams(dp(40), dp(40))
+        nbPlayLp.setMargins(0, 0, 0, dp(6))
+        nbBtns.addView(nbPlay, nbPlayLp)
+        nbNext = IconView(this); nbNext.icon = "next"; nbNext.setColor(WHITE)
+        nbNext.background = pressCircle()
+        nbNext.setOnClickListener { PlayerService.cmd(this, "next") }
+        nbBtns.addView(nbNext, LinearLayout.LayoutParams(dp(32), dp(32)))
+        nowBar.addView(nbBtns, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val nbLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        nbLp.setMargins(0, dp(10), 0, 0)
+        libScreen.addView(nowBar, nbLp)
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
@@ -1081,7 +1165,6 @@ class MainActivity : Activity() {
         rebuildRows(resetLimit)
     }
 
-    /* перестраиваем только строки: поле поиска и клавиатура не трогаются */
     private fun rebuildRows(resetLimit: Boolean = true) {
         if (resetLimit) visibleLimit = 100
         rowsBox.removeAllViews()
@@ -1589,20 +1672,24 @@ class MainActivity : Activity() {
 
     private fun refreshNow() {
         val playing = PlayerState.playing
-        val label = when {
+        val t = curTrack()
+        nbLine.text = when {
             PlayerState.error != null -> "⚠ " + PlayerState.error
             PlayerState.uri == null -> "Ничего не играет"
-            else -> PlayerState.title + " — " + PlayerState.artist
+            else -> PlayerState.artist + " - " + PlayerState.title
         }
-        nbText.text = label
-        nbPlay.text = if (playing) PAUSE_GLYPH else "▶"
+        nbFormat.text = if (t != null) "MP3" else ""
+        nbBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
+        nbBitrate.visibility = if (nbBitrate.text.isEmpty()) View.GONE else View.VISIBLE
+        nbPlay.icon = if (playing) "pause" else "play"
         playI.icon = if (playing) "pause" else "play"
         shufI.icon = if (PlayerState.shuffleOn) "shuffle" else "shuffleOff"
         shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
         repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
         repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
         if (PlayerState.uri == null) {
-            nbCover.setImageResource(0); npCover.setImageResource(0)
+            nbCover.setImageResource(0); nbCover.rotation = 0f
+            npCover.setImageResource(0)
             bigCoverUri = null; lastPlayerUri = null
         }
         if (PlayerState.uri != lastPlayerUri) {
