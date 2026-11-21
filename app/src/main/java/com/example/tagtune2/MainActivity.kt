@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -37,7 +38,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.Executors
 
-/* ---------- потоковая раскладка: перенос по строкам, опционально по центру ---------- */
+/* ---------- потоковая раскладка: перенос по строкам, уважает фиксированную высоту ---------- */
 class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
@@ -61,7 +62,10 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
             }
             posX += cw; rowH = maxOf(rowH, ch)
         }
-        setMeasuredDimension(width, posY + rowH + paddingBottom)
+        val hMode = MeasureSpec.getMode(heightMeasureSpec)
+        val hSize = MeasureSpec.getSize(heightMeasureSpec)
+        val height = if (hMode == MeasureSpec.EXACTLY) hSize else posY + rowH + paddingBottom
+        setMeasuredDimension(width, height)
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -226,6 +230,7 @@ class MainActivity : Activity() {
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
     private val PAUSE_GLYPH = "‖"
+    private val TAG_BG = Color.argb(128, 255, 77, 109)
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
@@ -252,7 +257,6 @@ class MainActivity : Activity() {
     private lateinit var queueI: IconView
     private lateinit var lyricsI: IconView
     private lateinit var tagsI: IconView
-    private lateinit var queueCounter: TextView
 
     data class Track(
         val uri: String, val title: String, val artist: String,
@@ -284,7 +288,7 @@ class MainActivity : Activity() {
                 tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
                 if (dur > 0) waveView.setProgress(pos.toFloat() / dur)
             }
-            handler.postDelayed(this, 400)
+            handler.postDelayed(this, 100)
         }
     }
 
@@ -325,6 +329,16 @@ class MainActivity : Activity() {
 
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
+
+    /* круг-отклик: прозрачный в покое, акцентный при нажатии */
+    private fun pressCircle(): StateListDrawable {
+        val pressed = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
+        val idle = GradientDrawable().apply { setColor(Color.TRANSPARENT); shape = GradientDrawable.OVAL }
+        val sld = StateListDrawable()
+        sld.addState(intArrayOf(android.R.attr.state_pressed), pressed)
+        sld.addState(intArrayOf(), idle)
+        return sld
+    }
 
     /* ---------- кэш библиотеки ---------- */
 
@@ -423,17 +437,14 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: ПЛЕЕР (без кнопки назад) ---------- */
+        /* ---------- ЭКРАН: ПЛЕЕР (центрирован амортизаторами) ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(10), dp(14), dp(14))
         playerScreen.visibility = View.GONE
 
-        queueCounter = TextView(this); queueCounter.textSize = 13f
-        queueCounter.setTextColor(GRAY)
-        queueCounter.gravity = android.view.Gravity.CENTER
-        queueCounter.setPadding(0, dp(4), 0, 0)
-        playerScreen.addView(queueCounter)
+        val spTop = View(this)
+        playerScreen.addView(spTop, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         npCover = ImageView(this)
         npCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -468,7 +479,7 @@ class MainActivity : Activity() {
         pTagsFlow.maxRows = 2
         pTagsFlow.centerRows = true
         pTagsFlow.setPadding(dp(6), dp(10), dp(6), 0)
-        playerScreen.addView(pTagsFlow)
+        playerScreen.addView(pTagsFlow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(86)))
 
         waveView = WaveformView(this)
         waveView.onSeek = { f ->
@@ -496,9 +507,11 @@ class MainActivity : Activity() {
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(10), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
+        shufI.background = pressCircle()
         shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
         transport.addView(shufI, LinearLayout.LayoutParams(0, dp(36), 1f))
         prevI = IconView(this); prevI.icon = "prev"; prevI.setColor(WHITE)
+        prevI.background = pressCircle()
         prevI.setOnClickListener { PlayerService.cmd(this, "prev") }
         transport.addView(prevI, LinearLayout.LayoutParams(0, dp(44), 1f))
         playI = IconView(this); playI.icon = "play"; playI.setColor(WHITE)
@@ -508,9 +521,11 @@ class MainActivity : Activity() {
         playLp.setMargins(dp(8), 0, dp(8), 0)
         transport.addView(playI, playLp)
         nextI = IconView(this); nextI.icon = "next"; nextI.setColor(WHITE)
+        nextI.background = pressCircle()
         nextI.setOnClickListener { PlayerService.cmd(this, "next") }
         transport.addView(nextI, LinearLayout.LayoutParams(0, dp(44), 1f))
         repI = IconView(this); repI.icon = "repeat"; repI.setColor(GRAY)
+        repI.background = pressCircle()
         repI.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
         transport.addView(repI, LinearLayout.LayoutParams(0, dp(36), 1f))
         playerScreen.addView(transport)
@@ -521,19 +536,25 @@ class MainActivity : Activity() {
         val sp1 = View(this)
         extraRow.addView(sp1, LinearLayout.LayoutParams(0, dp(40), 1f))
         queueI = IconView(this); queueI.icon = "queue"; queueI.setColor(WHITE)
+        queueI.background = pressCircle()
         queueI.setOnClickListener { openQueueDialog() }
         extraRow.addView(queueI, LinearLayout.LayoutParams(0, dp(40), 1f))
         lyricsI = IconView(this); lyricsI.icon = "lyrics"; lyricsI.setColor(WHITE)
+        lyricsI.background = pressCircle()
         lyricsI.setOnClickListener { openLyricsDialog() }
         val lyrLp = LinearLayout.LayoutParams(dp(64), dp(40))
         lyrLp.setMargins(dp(8), 0, dp(8), 0)
         extraRow.addView(lyricsI, lyrLp)
         tagsI = IconView(this); tagsI.icon = "tags"; tagsI.setColor(WHITE)
+        tagsI.background = pressCircle()
         tagsI.setOnClickListener { curTrack()?.let { openEditor(it) } }
         extraRow.addView(tagsI, LinearLayout.LayoutParams(0, dp(40), 1f))
         val sp2 = View(this)
         extraRow.addView(sp2, LinearLayout.LayoutParams(0, dp(40), 1f))
         playerScreen.addView(extraRow)
+
+        val spBottom = View(this)
+        playerScreen.addView(spBottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
@@ -1123,7 +1144,7 @@ class MainActivity : Activity() {
             val chip = TextView(this)
             chip.text = "#$g"
             chip.setPadding(dp(12), dp(7), dp(12), dp(7))
-            chip.background = pillBg(Color.parseColor("#241638"), 99)
+            chip.background = pillBg(TAG_BG, 99)
             chip.setTextColor(Color.WHITE)
             val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
@@ -1185,8 +1206,6 @@ class MainActivity : Activity() {
         shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
         repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
         repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
-        queueCounter.text = if (PlayerState.queueSize > 0)
-            "Трек ${PlayerState.queuePos} из ${PlayerState.queueSize}" + (if (PlayerState.shuffleOn) " · шафл" else "") else ""
         if (PlayerState.uri == null) {
             nbCover.setImageResource(0); npCover.setImageResource(0)
             bigCoverUri = null; lastPlayerUri = null
