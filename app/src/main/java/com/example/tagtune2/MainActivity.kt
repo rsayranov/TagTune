@@ -909,7 +909,7 @@ class MainActivity : Activity() {
             val on = selected.contains(tag)
             chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
             chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
-            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.Margin.WRAP_CONTENT)
+            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
             chip.tag = "header"
             chip.setOnClickListener {
