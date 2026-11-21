@@ -59,6 +59,8 @@ class PlayerService : Service() {
     private var player: MediaPlayer? = null
     private var queue = listOf<QItem>()
     private var index = 0
+    private var currentIndex = -1
+    private val history = ArrayDeque<Int>()
     private var startedAtMs = 0L
     private var lastPlayAtMs = 0L
     private lateinit var session: MediaSessionCompat
@@ -88,7 +90,9 @@ class PlayerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "play" -> {
-                queue = (intent.getSerializableExtra("queue") as? ArrayList<*>)?.filterIsInstance<QItem>() ?: queue
+                val newQ = (intent.getSerializableExtra("queue") as? ArrayList<*>)?.filterIsInstance<QItem>() ?: queue
+                if (newQ.map { it.uri } != queue.map { it.uri }) history.clear()
+                queue = newQ
                 index = intent.getIntExtra("index", 0)
                 playCurrent()
             }
@@ -111,11 +115,17 @@ class PlayerService : Service() {
 
     fun currentPosition(): Int = try { player?.currentPosition ?: 0 } catch (e: Exception) { 0 }
 
-    private fun playCurrent() {
+    private fun playCurrent(pushHistory: Boolean = true) {
         val item = queue.getOrNull(index) ?: return
         val now = SystemClock.uptimeMillis()
         if (now - lastPlayAtMs < 250 && PlayerState.uri == item.uri) return
         lastPlayAtMs = now
+
+        if (pushHistory && currentIndex >= 0 && currentIndex != index) {
+            history.addLast(currentIndex)
+            while (history.size > 10) history.removeFirst()
+        }
+        currentIndex = index
 
         player?.let { runCatching { it.release() } }
         player = null
@@ -141,7 +151,6 @@ class PlayerService : Service() {
                 mp.setDataSource(this, Uri.parse(item.uri))
                 mp.setOnCompletionListener {
                     val played = SystemClock.uptimeMillis() - startedAtMs
-                    // Карусель-стоп: мгновенный «конец» — это ошибка, а не конец трека
                     if (played > 1000) mainHandler.post { autoNext() }
                     else mainHandler.post { fail("Трек завершился мгновенно — поток пустой или недоступный. Перебор остановлен.") }
                 }
@@ -168,18 +177,18 @@ class PlayerService : Service() {
     private fun autoNext() {
         if (queue.isEmpty()) return
         when (PlayerState.repeatMode) {
-            2 -> { playCurrent(); return }                       // повтор одного трека
+            2 -> { playCurrent(); return }
         }
-        if (PlayerState.shuffleOn && queue.size > 1) {           // шафл: случайный, не тот же
+        if (PlayerState.shuffleOn && queue.size > 1) {
             var r = index
             while (r == index) r = (Math.random() * queue.size).toInt()
             index = r
             playCurrent()
             return
         }
-        if (index + 1 < queue.size) { index++; playCurrent() }   // дальше по очереди
-        else if (PlayerState.repeatMode == 1) { index = 0; playCurrent() } // повтор очереди
-        else pause()                                             // конец очереди
+        if (index + 1 < queue.size) { index++; playCurrent() }
+        else if (PlayerState.repeatMode == 1) { index = 0; playCurrent() }
+        else pause()
     }
 
     private fun next() {
@@ -192,10 +201,15 @@ class PlayerService : Service() {
         playCurrent()
     }
 
+    /* previous = история: тот трек, что звучал до переключения */
     private fun prev() {
         if (queue.isEmpty()) return
-        index = (index - 1 + queue.size) % queue.size
-        playCurrent()
+        if (history.isNotEmpty()) {
+            index = history.removeLast()
+        } else {
+            index = (index - 1 + queue.size) % queue.size
+        }
+        playCurrent(false)
     }
 
     private fun fail(msg: String) {
