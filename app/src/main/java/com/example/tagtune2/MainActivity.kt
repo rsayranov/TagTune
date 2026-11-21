@@ -266,7 +266,6 @@ class MainActivity : Activity() {
     private val ACCENT = Color.parseColor("#FF4D6D")
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
-    private val PAUSE_GLYPH = "‖"
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val HL = Color.argb(51, 255, 77, 109)
     private lateinit var libScreen: LinearLayout
@@ -279,11 +278,10 @@ class MainActivity : Activity() {
     private lateinit var contentScroll: ScrollView
     private lateinit var searchInput: EditText
     private lateinit var foldersBox: LinearLayout
+    private lateinit var nbBar: LinearLayout
     private lateinit var nbCover: ImageView
-    private lateinit var nbLine: TextView
-    private lateinit var nbSeek: SeekBar
-    private lateinit var nbCur: TextView
-    private lateinit var nbDur: TextView
+    private lateinit var nbTitle: TextView
+    private lateinit var nbArtist: TextView
     private lateinit var nbFormat: TextView
     private lateinit var nbBitrate: TextView
     private lateinit var nbPlay: IconView
@@ -333,7 +331,6 @@ class MainActivity : Activity() {
     private var searchShown = false
     private var searchQuery = ""
     private var updatingSearch = false
-    private var nbSeeking = false
     private val thumbCache = object : LruCache<String, Bitmap>(80) {}
     private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
@@ -347,14 +344,7 @@ class MainActivity : Activity() {
             if (p != null && PlayerState.uri != null) {
                 val pos = p.currentPosition(); val dur = PlayerState.durationMs
                 tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
-                nbCur.text = fmt(pos.toLong()); nbDur.text = fmt(dur.toLong())
-                if (dur > 0) {
-                    waveView.setProgress(pos.toFloat() / dur)
-                    if (!nbSeeking) {
-                        nbSeek.max = dur.toInt() / 1000
-                        nbSeek.progress = pos / 1000
-                    }
-                }
+                if (dur > 0) waveView.setProgress(pos.toFloat() / dur)
                 if (PlayerState.playing) nbCover.rotation = (nbCover.rotation + 0.5f) % 360f
             }
             handler.postDelayed(this, 100)
@@ -417,10 +407,11 @@ class MainActivity : Activity() {
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
 
+    /* активный трек: акцентная рамка 1dp, без заливки */
     private fun rowBg(active: Boolean): Drawable? =
         if (active) GradientDrawable().apply {
             setColor(Color.TRANSPARENT)
-            setStroke(dp(2), ACCENT)
+            setStroke(dp(1), ACCENT)
             cornerRadius = dp(12).toFloat()
         } else null
 
@@ -461,7 +452,7 @@ class MainActivity : Activity() {
         marqueeHandler.post(tick)
     }
 
-    private fun marqueeText(size: Float, color: Int): Pair<HorizontalScrollView, TextView> {
+    private fun marqueeText(size: Float, color: Int, gravity: Int): Pair<HorizontalScrollView, TextView> {
         val hsv = HorizontalScrollView(this)
         hsv.isHorizontalScrollBarEnabled = false
         hsv.setFillViewport(true)
@@ -469,9 +460,9 @@ class MainActivity : Activity() {
         tv.textSize = size
         tv.setTextColor(color)
         tv.setSingleLine(true)
-        tv.gravity = Gravity.CENTER
+        tv.gravity = gravity
         tv.includeFontPadding = false
-        hsv.addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
+        hsv.addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, gravity))
         attachAutoScroll(hsv)
         return Pair(hsv, tv)
     }
@@ -602,17 +593,34 @@ class MainActivity : Activity() {
             }
         }
 
-        /* ---------- МИНИПЛЕЕР: чёрная плашка, акцентная рамка, круглая вращающаяся обложка ---------- */
-        val nowBar = LinearLayout(this)
-        nowBar.orientation = LinearLayout.HORIZONTAL
-        nowBar.gravity = Gravity.CENTER_VERTICAL
-        nowBar.background = GradientDrawable().apply {
+        /* ---------- МИНИПЛЕЕР: три строки, play+next в ряд, смахивание на паузе ---------- */
+        nbBar = LinearLayout(this)
+        nbBar.orientation = LinearLayout.HORIZONTAL
+        nbBar.gravity = Gravity.CENTER_VERTICAL
+        nbBar.background = GradientDrawable().apply {
             setColor(Color.BLACK)
-            setStroke(dp(2), ACCENT)
-            cornerRadius = dp(16).toFloat()
+            setStroke(dp(1), ACCENT)
+            cornerRadius = dp(36).toFloat()
         }
-        nowBar.setPadding(dp(10), dp(10), dp(10), dp(10))
-        nowBar.setOnClickListener { showPlayer() }
+        nbBar.setPadding(dp(12), dp(10), dp(12), dp(10))
+
+        val nbGd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                showPlayer()
+                return true
+            }
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                val dx = e2.x - (e1?.x ?: e2.x)
+                val dy = e2.y - (e1?.y ?: e2.y)
+                if (!PlayerState.playing && abs(dx) > abs(dy) && abs(dx) > dp(60)) {
+                    nbBar.visibility = View.GONE
+                    return true
+                }
+                return false
+            }
+        })
+        nbBar.setOnTouchListener { _, ev -> nbGd.onTouchEvent(ev) }
 
         nbCover = ImageView(this)
         nbCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -621,77 +629,41 @@ class MainActivity : Activity() {
         nbCover.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) }
         }
-        nowBar.addView(nbCover, LinearLayout.LayoutParams(dp(72), dp(72)))
+        nbBar.addView(nbCover, LinearLayout.LayoutParams(dp(72), dp(72)))
 
         val nbInfo = LinearLayout(this); nbInfo.orientation = LinearLayout.VERTICAL
-        nbInfo.setPadding(dp(10), 0, dp(6), 0)
-
-        val lineHsv = HorizontalScrollView(this)
-        lineHsv.isHorizontalScrollBarEnabled = false
-        lineHsv.setFillViewport(true)
-        nbLine = TextView(this)
-        nbLine.textSize = 13f; nbLine.setTextColor(WHITE)
-        nbLine.setSingleLine(true); nbLine.gravity = Gravity.START
-        nbLine.includeFontPadding = false
-        nbLine.text = "Ничего не играет"
-        lineHsv.addView(nbLine, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START))
-        attachAutoScroll(lineHsv)
-        nbInfo.addView(lineHsv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-
-        nbSeek = SeekBar(this)
-        nbSeek.progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
-        nbSeek.thumbTintList = android.content.res.ColorStateList.valueOf(ACCENT)
-        nbSeek.setPadding(dp(4), dp(6), dp(4), 0)
-        nbSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) nbCur.text = fmt(progress * 1000L)
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) { nbSeeking = true }
-            override fun onStopTrackingTouch(sb: SeekBar?) {
-                nbSeeking = false
-                PlayerService.cmd(this@MainActivity, "seek", seekMs = sb!!.progress * 1000)
-            }
-        })
-        nbInfo.addView(nbSeek, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-
-        val nbTimes = LinearLayout(this); nbTimes.orientation = LinearLayout.HORIZONTAL
-        nbTimes.gravity = Gravity.CENTER_VERTICAL
-        nbCur = TextView(this); nbCur.text = "0:00"; nbCur.textSize = 11f
-        nbCur.setTextColor(Color.parseColor("#9A93A8")); nbCur.gravity = Gravity.START
-        val nbFmtGroup = LinearLayout(this); nbFmtGroup.orientation = LinearLayout.HORIZONTAL
-        nbFmtGroup.gravity = Gravity.CENTER
+        nbInfo.setPadding(dp(12), 0, dp(8), 0)
+        val nbTitlePair = marqueeText(15f, WHITE, Gravity.START); nbTitle = nbTitlePair.second
+        nbTitle.text = "Ничего не играет"
+        nbInfo.addView(nbTitlePair.first, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val nbArtistPair = marqueeText(13f, ACCENT, Gravity.START); nbArtist = nbArtistPair.second
+        nbInfo.addView(nbArtistPair.first, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val nbFmtRow = LinearLayout(this); nbFmtRow.orientation = LinearLayout.HORIZONTAL
+        nbFmtRow.gravity = Gravity.CENTER_VERTICAL
+        nbFmtRow.setPadding(0, dp(3), 0, 0)
         nbFormat = TextView(this); nbFormat.textSize = 11f; nbFormat.setTextColor(WHITE)
         nbFormat.background = pillBg(BUBBLE_BG, 99)
         nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
         nbBitrate = TextView(this); nbBitrate.textSize = 11f
-        nbBitrate.setTextColor(Color.parseColor("#9A93A8")); nbBitrate.setPadding(dp(5), 0, 0, 0)
-        nbFmtGroup.addView(nbFormat); nbFmtGroup.addView(nbBitrate)
-        nbDur = TextView(this); nbDur.text = "0:00"; nbDur.textSize = 11f
-        nbDur.setTextColor(Color.parseColor("#9A93A8")); nbDur.gravity = Gravity.END
-        nbTimes.addView(nbCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        nbTimes.addView(nbFmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        nbTimes.addView(nbDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        nbInfo.addView(nbTimes, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        nbBitrate.setTextColor(Color.parseColor("#9A93A8")); nbBitrate.setPadding(dp(6), 0, 0, 0)
+        nbFmtRow.addView(nbFormat); nbFmtRow.addView(nbBitrate)
+        nbInfo.addView(nbFmtRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        nbBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
-        nowBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-
-        val nbBtns = LinearLayout(this); nbBtns.orientation = LinearLayout.VERTICAL
-        nbBtns.gravity = Gravity.CENTER
         nbPlay = IconView(this); nbPlay.icon = "play"; nbPlay.setColor(WHITE)
-        nbPlay.background = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
+        nbPlay.background = pressCircle()
         nbPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
-        val nbPlayLp = LinearLayout.LayoutParams(dp(40), dp(40))
-        nbPlayLp.setMargins(0, 0, 0, dp(6))
-        nbBtns.addView(nbPlay, nbPlayLp)
+        nbBar.addView(nbPlay, LinearLayout.LayoutParams(dp(40), dp(40)))
         nbNext = IconView(this); nbNext.icon = "next"; nbNext.setColor(WHITE)
         nbNext.background = pressCircle()
         nbNext.setOnClickListener { PlayerService.cmd(this, "next") }
-        nbBtns.addView(nbNext, LinearLayout.LayoutParams(dp(32), dp(32)))
-        nowBar.addView(nbBtns, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val nbNextLp = LinearLayout.LayoutParams(dp(36), dp(36))
+        nbNextLp.setMargins(dp(4), 0, 0, 0)
+        nbBar.addView(nbNext, nbNextLp)
 
         val nbLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        nbLp.setMargins(0, dp(10), 0, 0)
-        libScreen.addView(nowBar, nbLp)
+        nbLp.setMargins(0, dp(10), 0, dp(8))
+        libScreen.addView(nbBar, nbLp)
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
@@ -738,15 +710,15 @@ class MainActivity : Activity() {
         npCover.layoutParams = covLp
         gestureZone.addView(npCover)
 
-        val titlePair = marqueeText(22f, WHITE); pTitle = titlePair.second
+        val titlePair = marqueeText(22f, WHITE, Gravity.CENTER); pTitle = titlePair.second
         val titleLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         titleLp.topMargin = dp(12)
         gestureZone.addView(titlePair.first, titleLp)
 
-        val artistPair = marqueeText(17f, ACCENT); pArtist = artistPair.second
+        val artistPair = marqueeText(17f, ACCENT, Gravity.CENTER); pArtist = artistPair.second
         gestureZone.addView(artistPair.first)
 
-        val albumPair = marqueeText(15f, Color.parseColor("#9A93A8")); pAlbum = albumPair.second
+        val albumPair = marqueeText(15f, Color.parseColor("#9A93A8"), Gravity.CENTER); pAlbum = albumPair.second
         gestureZone.addView(albumPair.first)
 
         tagsScroll = HorizontalScrollView(this)
@@ -1673,15 +1645,17 @@ class MainActivity : Activity() {
     private fun refreshNow() {
         val playing = PlayerState.playing
         val t = curTrack()
-        nbLine.text = when {
+        nbTitle.text = when {
             PlayerState.error != null -> "⚠ " + PlayerState.error
             PlayerState.uri == null -> "Ничего не играет"
-            else -> PlayerState.artist + " - " + PlayerState.title
+            else -> PlayerState.title
         }
+        nbArtist.text = PlayerState.artist
         nbFormat.text = if (t != null) "MP3" else ""
         nbBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
         nbBitrate.visibility = if (nbBitrate.text.isEmpty()) View.GONE else View.VISIBLE
         nbPlay.icon = if (playing) "pause" else "play"
+        if (playing) nbBar.visibility = View.VISIBLE
         playI.icon = if (playing) "pause" else "play"
         shufI.icon = if (PlayerState.shuffleOn) "shuffle" else "shuffleOff"
         shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
@@ -1714,6 +1688,7 @@ class MainActivity : Activity() {
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
+        nbBar.visibility = View.VISIBLE
         bigCoverUri = null; bigCoverBm = null
         Thread {
             val small = loadBitmap(t.coverPath, 192)
