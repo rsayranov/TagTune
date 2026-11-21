@@ -16,16 +16,17 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 
-/* ---------- волна: зеркальные бары, быстрое семплирование окон ---------- */
+/* ---------- волна: зеркальные бары, плавный прогресс внутри бара ---------- */
 class WaveformView(context: Context) : View(context) {
 
     private var peaks: FloatArray? = null
-    private var progress = 0f
+    private var target = 0f
+    private var shown = 0f
     var onSeek: ((Float) -> Unit)? = null
     private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun setPeaks(p: FloatArray?) { peaks = p; invalidate() }
-    fun setProgress(f: Float) { progress = f.coerceIn(0f, 1f); invalidate() }
+    fun setProgress(f: Float) { target = f.coerceIn(0f, 1f); invalidate() }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -36,14 +37,29 @@ class WaveformView(context: Context) : View(context) {
             canvas.drawRect(0f, h / 2 - 1f, w, h / 2 + 1f, barPaint)
             return
         }
+        /* плавное догоняние цели: без ступенек между опросами позиции */
+        if (abs(target - shown) > 0.0005f) {
+            shown += (target - shown) * 0.35f
+            postInvalidateOnAnimation()
+        } else shown = target
+
         val n = p.size
         val slot = w / n
         val bw = slot * 0.55f
         for (i in 0 until n) {
             val bh = maxOf(2f, p[i] * h * 0.92f)
             val x = i * slot + (slot - bw) / 2
-            barPaint.color = if ((i + 0.5f) / n <= progress) Color.parseColor("#FF4D6D") else Color.parseColor("#4A4653")
-            canvas.drawRoundRect(x, (h - bh) / 2, x + bw, (h + bh) / 2, bw / 2, bw / 2, barPaint)
+            val top = (h - bh) / 2
+            val bottom = (h + bh) / 2
+            barPaint.color = Color.parseColor("#4A4653")
+            canvas.drawRoundRect(x, top, x + bw, bottom, bw / 2, bw / 2, barPaint)
+            val frac = (shown * n - i).coerceIn(0f, 1f)
+            if (frac > 0f) {
+                val wp = bw * frac
+                barPaint.color = Color.parseColor("#FF4D6D")
+                val r = minOf(bw / 2, wp / 2)
+                canvas.drawRoundRect(x, top, x + wp, bottom, r, r, barPaint)
+            }
         }
     }
 
