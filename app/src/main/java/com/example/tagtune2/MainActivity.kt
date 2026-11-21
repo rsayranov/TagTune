@@ -22,16 +22,21 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.LruCache
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -50,7 +55,7 @@ import java.io.InputStream
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
-/* ---------- круглый отклик при нажатии: круг по меньшей стороне, не овал ---------- */
+/* ---------- круглый отклик при нажатии ---------- */
 class PressCircleDrawable(private val color: Int) : Drawable() {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     init { p.color = color }
@@ -63,7 +68,7 @@ class PressCircleDrawable(private val color: Int) : Drawable() {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/* ---------- потоковая раскладка: перенос по строкам, уважает фиксированную высоту ---------- */
+/* ---------- потоковая раскладка ---------- */
 class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
@@ -134,12 +139,12 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
 }
 
-/* ---------- читает только ID3-шапку: теги, обложка, метаданные, текст ---------- */
+/* ---------- ID3-шапка ---------- */
 object Id3Reader {
     data class Result(
         val comment: String?, val cover: ByteArray?,
         val title: String?, val artist: String?, val album: String?,
-        val genre: String?, val durationMs: Long, val lyrics: String?
+        val genre: String?, val durationMs: Long, val lyrics: String?, val year: String?
     )
 
     fun read(ins: InputStream): Result? {
@@ -159,7 +164,7 @@ object Id3Reader {
         var comment: String? = null; var cover: ByteArray? = null
         var title: String? = null; var artist: String? = null
         var album: String? = null; var genre: String? = null
-        var lyrics: String? = null
+        var lyrics: String? = null; var year: String? = null
         var dur = 0L
         var p = 0
         while (p + 10 <= size) {
@@ -180,6 +185,7 @@ object Id3Reader {
                     "TPE1" -> if (artist == null) artist = decodeTextFrame(body)
                     "TALB" -> if (album == null) album = decodeTextFrame(body)
                     "TCON" -> if (genre == null) genre = decodeTextFrame(body)
+                    "TDRC", "TYER", "TDRL" -> if (year == null) year = decodeTextFrame(body)?.take(4)
                     "TLEN" -> decodeTextFrame(body)?.toLongOrNull()?.let { dur = it }
                 }
             } else if (ver == 2) {
@@ -197,10 +203,11 @@ object Id3Reader {
                     "TP1" -> if (artist == null) artist = decodeTextFrame(body)
                     "TAL" -> if (album == null) album = decodeTextFrame(body)
                     "TCO" -> if (genre == null) genre = decodeTextFrame(body)
+                    "TYE" -> if (year == null) year = decodeTextFrame(body)?.take(4)
                 }
             } else break
         }
-        return Result(comment, cover, title, artist, album, genre, dur, lyrics)
+        return Result(comment, cover, title, artist, album, genre, dur, lyrics, year)
     }
 
     private fun synch(a: Byte, b: Byte, c: Byte, d: Byte) =
@@ -261,6 +268,8 @@ class MainActivity : Activity() {
     private lateinit var settingsScreen: LinearLayout
     private lateinit var status: TextView
     private lateinit var contentBox: LinearLayout
+    private lateinit var contentScroll: ScrollView
+    private lateinit var sidePanel: LinearLayout
     private lateinit var foldersBox: LinearLayout
     private lateinit var nbCover: ImageView
     private lateinit var nbText: TextView
@@ -289,7 +298,8 @@ class MainActivity : Activity() {
         val uri: String, val title: String, val artist: String,
         val tags: List<String>, val coverPath: String? = null,
         val album: String = "Неизвестный альбом", val genre: String = "",
-        val durationMs: Long = 0, val bitrateKbps: Int = 0, val lyrics: String? = null
+        val durationMs: Long = 0, val bitrateKbps: Int = 0, val lyrics: String? = null,
+        val year: String = ""
     )
 
     private var tracks = listOf<Track>()
@@ -303,9 +313,15 @@ class MainActivity : Activity() {
     private var bigCoverBm: Bitmap? = null
     private var bigCoverUri: String? = null
     private var lastPlayerUri: String? = null
+    private var scanRunning = false
+    private var pullDownY = 0f
+    private val sideEntries = mutableListOf<Pair<String, View>>()
     private val thumbCache = object : LruCache<String, Bitmap>(80) {}
     private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
+    private val marqueeHandler = Handler(Looper.getMainLooper())
+    private val scrollDirs = HashMap<HorizontalScrollView, Int>()
+    private val scrollTouch = HashMap<HorizontalScrollView, Long>()
     private val listener: () -> Unit = { runOnUiThread { refreshNow(); highlightCurrent() } }
     private val poll = object : Runnable {
         override fun run() {
@@ -348,7 +364,7 @@ class MainActivity : Activity() {
         if (cached != null) { iv.setImageBitmap(cached); return }
         iv.setImageBitmap(null); iv.setBackgroundColor(Color.parseColor("#2A2A3A")); iv.tag = path
         thumbPool.execute {
-            val bm = loadBitmap(path, 96)
+            val bm = loadBitmap(path, 192)
             if (bm != null) thumbCache.put(path, bm)
             runOnUiThread { if (iv.tag as? String == path) iv.setImageBitmap(bm) }
         }
@@ -364,6 +380,51 @@ class MainActivity : Activity() {
         return sld
     }
 
+    /* ---------- бегущая строка: авто-бег + ручной скролл ---------- */
+
+    private fun attachAutoScroll(hsv: HorizontalScrollView) {
+        scrollDirs[hsv] = 1
+        scrollTouch[hsv] = 0L
+        hsv.setOnTouchListener { _, ev ->
+            scrollTouch[hsv] = SystemClock.uptimeMillis()
+            false
+        }
+        val tick = object : Runnable {
+            override fun run() {
+                if (hsv.isShown && hsv.width > 0 && hsv.childCount > 0) {
+                    val child = hsv.getChildAt(0)
+                    val max = child.width - hsv.width
+                    val last = scrollTouch[hsv] ?: 0L
+                    if (max > 0 && SystemClock.uptimeMillis() - last > 2500) {
+                        var d = scrollDirs[hsv] ?: 1
+                        var x = hsv.scrollX + d
+                        if (x >= max) { x = max; d = -1; scrollTouch[hsv] = SystemClock.uptimeMillis() }
+                        else if (x <= 0) { x = 0; d = 1; scrollTouch[hsv] = SystemClock.uptimeMillis() }
+                        hsv.scrollTo(x, 0)
+                        scrollDirs[hsv] = d
+                    }
+                }
+                marqueeHandler.postDelayed(this, 40)
+            }
+        }
+        marqueeHandler.post(tick)
+    }
+
+    private fun marqueeText(size: Float, color: Int): Pair<HorizontalScrollView, TextView> {
+        val hsv = HorizontalScrollView(this)
+        hsv.isHorizontalScrollBarEnabled = false
+        hsv.fillViewport = true
+        val tv = TextView(this)
+        tv.textSize = size
+        tv.setTextColor(color)
+        tv.setSingleLine(true)
+        tv.gravity = Gravity.CENTER
+        tv.includeFontPadding = false
+        hsv.addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
+        attachAutoScroll(hsv)
+        return Pair(hsv, tv)
+    }
+
     /* ---------- кэш библиотеки ---------- */
 
     private fun saveLibraryCache() {
@@ -373,7 +434,7 @@ class MainActivity : Activity() {
                 val o = JSONObject()
                 o.put("uri", t.uri); o.put("title", t.title); o.put("artist", t.artist)
                 o.put("album", t.album); o.put("genre", t.genre); o.put("dur", t.durationMs)
-                o.put("br", t.bitrateKbps)
+                o.put("br", t.bitrateKbps); o.put("yr", t.year)
                 if (t.lyrics != null) o.put("lyr", t.lyrics) else o.put("lyr", JSONObject.NULL)
                 o.put("tags", JSONArray(t.tags))
                 if (t.coverPath != null) o.put("cover", t.coverPath) else o.put("cover", JSONObject.NULL)
@@ -396,7 +457,7 @@ class MainActivity : Activity() {
             out.add(Track(
                 o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
                 o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
-                o.optLong("dur", 0), o.optInt("br", 0), lyr
+                o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", "")
             ))
         }
         out
@@ -421,12 +482,14 @@ class MainActivity : Activity() {
         libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
 
         val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
+        topRow.gravity = Gravity.CENTER_VERTICAL
         val headTitle = TextView(this); headTitle.text = "Медиатека"
         headTitle.textSize = 26f; headTitle.setTextColor(WHITE)
         topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val settingsBtn = Button(this); settingsBtn.text = "⚙"
+        val settingsBtn = IconView(this); settingsBtn.icon = "gear"; settingsBtn.setColor(WHITE)
+        settingsBtn.background = pressCircle()
         settingsBtn.setOnClickListener { showSettings() }
-        topRow.addView(settingsBtn)
+        topRow.addView(settingsBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
         libScreen.addView(topRow)
 
         status = TextView(this); status.textSize = 13f
@@ -434,10 +497,30 @@ class MainActivity : Activity() {
         status.visibility = View.GONE
         libScreen.addView(status)
 
-        val contentScroll = ScrollView(this)
+        val libFrame = FrameLayout(this)
+        contentScroll = ScrollView(this)
         contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
+        contentBox.setPadding(0, 0, dp(22), 0)
         contentScroll.addView(contentBox)
-        libScreen.addView(contentScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        libFrame.addView(contentScroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        sidePanel = LinearLayout(this)
+        sidePanel.orientation = LinearLayout.VERTICAL
+        sidePanel.setBackgroundColor(Color.argb(200, 13, 10, 18))
+        sidePanel.setPadding(0, dp(4), 0, dp(4))
+        sidePanel.visibility = View.GONE
+        libFrame.addView(sidePanel, FrameLayout.LayoutParams(dp(20), FrameLayout.LayoutParams.MATCH_PARENT, Gravity.END))
+        libScreen.addView(libFrame, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        /* свайп вниз из верха списка = пересканирование */
+        contentScroll.setOnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> pullDownY = ev.y
+                MotionEvent.ACTION_MOVE -> {
+                    if (contentScroll.scrollY == 0 && ev.y - pullDownY > dp(90) && !scanRunning) startScan()
+                }
+            }
+            false
+        }
 
         val nowBar = LinearLayout(this)
         nowBar.orientation = LinearLayout.HORIZONTAL
@@ -504,25 +587,23 @@ class MainActivity : Activity() {
         npCover.layoutParams = covLp
         gestureZone.addView(npCover)
 
-        pTitle = TextView(this); pTitle.text = "Ничего не играет"
-        pTitle.textSize = 22f; pTitle.setTextColor(WHITE)
-        pTitle.gravity = android.view.Gravity.CENTER
-        pTitle.setPadding(0, dp(12), 0, 0)
-        gestureZone.addView(pTitle)
+        val titlePair = marqueeText(22f, WHITE); pTitle = titlePair.second
+        val titleLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        titleLp.topMargin = dp(12)
+        gestureZone.addView(titlePair.first, titleLp)
 
-        pArtist = TextView(this); pArtist.setTextColor(ACCENT)
-        pArtist.textSize = 17f; pArtist.gravity = android.view.Gravity.CENTER
-        gestureZone.addView(pArtist)
+        val artistPair = marqueeText(17f, ACCENT); pArtist = artistPair.second
+        gestureZone.addView(artistPair.first)
 
-        pAlbum = TextView(this); pAlbum.setTextColor(Color.parseColor("#9A93A8"))
-        pAlbum.textSize = 15f; pAlbum.gravity = android.view.Gravity.CENTER
-        gestureZone.addView(pAlbum)
+        val albumPair = marqueeText(15f, Color.parseColor("#9A93A8")); pAlbum = albumPair.second
+        gestureZone.addView(albumPair.first)
 
         tagsScroll = HorizontalScrollView(this)
         tagsScroll.isHorizontalScrollBarEnabled = false
         tagsRow = LinearLayout(this); tagsRow.orientation = LinearLayout.HORIZONTAL
         tagsRow.setPadding(dp(6), dp(4), dp(6), 0)
         tagsScroll.addView(tagsRow)
+        attachAutoScroll(tagsScroll)
         val tagsLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36))
         tagsLp.topMargin = dp(12)
         gestureZone.addView(tagsScroll, tagsLp)
@@ -539,29 +620,33 @@ class MainActivity : Activity() {
         playerScreen.addView(waveView, waveLp)
 
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
-        times.gravity = android.view.Gravity.CENTER_VERTICAL
-        tCur = TextView(this); tCur.text = "0:00"; tCur.setTextColor(Color.parseColor("#9A93A8"))
-        tCur.gravity = android.view.Gravity.START
+        times.gravity = Gravity.CENTER_VERTICAL
+        val timesLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        timesLp.topMargin = dp(12)
+        tCur = TextView(this); tCur.text = "0:00"; tCur.textSize = 13f
+        tCur.setTextColor(Color.parseColor("#9A93A8"))
+        tCur.gravity = Gravity.START
         val fmtGroup = LinearLayout(this); fmtGroup.orientation = LinearLayout.HORIZONTAL
-        fmtGroup.gravity = android.view.Gravity.CENTER
-        pFormat = TextView(this); pFormat.textSize = 12f
+        fmtGroup.gravity = Gravity.CENTER
+        pFormat = TextView(this); pFormat.textSize = 13f
         pFormat.setTextColor(WHITE)
         pFormat.background = pillBg(BUBBLE_BG, 99)
-        pFormat.setPadding(dp(10), dp(4), dp(10), dp(4))
-        pBitrate = TextView(this); pBitrate.textSize = 12f
+        pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
+        pBitrate = TextView(this); pBitrate.textSize = 13f
         pBitrate.setTextColor(Color.parseColor("#9A93A8"))
         pBitrate.setPadding(dp(6), 0, 0, 0)
         fmtGroup.addView(pFormat)
         fmtGroup.addView(pBitrate)
-        tDur = TextView(this); tDur.text = "0:00"; tDur.setTextColor(Color.parseColor("#9A93A8"))
-        tDur.gravity = android.view.Gravity.END
+        tDur = TextView(this); tDur.text = "0:00"; tDur.textSize = 13f
+        tDur.setTextColor(Color.parseColor("#9A93A8"))
+        tDur.gravity = Gravity.END
         times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         times.addView(fmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        playerScreen.addView(times)
+        playerScreen.addView(times, timesLp)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
-        transport.gravity = android.view.Gravity.CENTER_VERTICAL
+        transport.gravity = Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(20), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
         shufI.background = pressCircle()
@@ -588,7 +673,7 @@ class MainActivity : Activity() {
         playerScreen.addView(transport)
 
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
-        extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
+        extraRow.gravity = Gravity.CENTER_VERTICAL
         extraRow.setPadding(0, dp(28), 0, 0)
         val sp1 = View(this)
         extraRow.addView(sp1, LinearLayout.LayoutParams(0, dp(40), 1f))
@@ -688,6 +773,12 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onDestroy() {
+        marqueeHandler.removeCallbacksAndMessages(null)
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
     private fun openQueueDialog() {
         val scroll = ScrollView(this)
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
@@ -776,9 +867,11 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- сканирование ---------- */
+    /* ---------- сканирование с прогрессом ---------- */
 
     private fun startScan() {
+        if (scanRunning) return
+        scanRunning = true
         status.visibility = View.VISIBLE
         status.text = "Сканирую папки..."
         Thread {
@@ -788,21 +881,31 @@ class MainActivity : Activity() {
                     val tree = DocumentFile.fromTreeUri(this, Uri.parse(u)) ?: continue
                     walk(tree, files, 0)
                 }
+                val total = minOf(files.size, 5000)
+                runOnUiThread { status.text = "Сканирую: 0/$total" }
                 val seen = mutableSetOf<String>()
                 val out = mutableListOf<Track>()
+                var i = 0
                 for (f in files) {
                     val key = f.uri.toString()
                     if (seen.add(key) && out.size < 5000) out.add(readTrack(f))
+                    i++
+                    if (i % 8 == 0) {
+                        val done = i
+                        runOnUiThread { status.text = "Сканирую: $done/$total" }
+                    }
                 }
                 tracks = out
                 saveLibraryCache()
                 runOnUiThread {
                     status.visibility = View.GONE
+                    scanRunning = false
                     rebuildContent()
                 }
             } catch (ex: Throwable) {
                 val err = android.util.Log.getStackTraceString(ex)
                 runOnUiThread {
+                    scanRunning = false
                     status.visibility = View.VISIBLE
                     status.text = "ОЙ! Споткнулись о камень:\n\n$err"
                 }
@@ -827,6 +930,7 @@ class MainActivity : Activity() {
         var tags = emptyList<String>()
         var coverPath: String? = null
         var lyrics: String? = null
+        var year = ""
         try {
             contentResolver.openInputStream(f.uri)?.use { ins ->
                 val r = Id3Reader.read(ins)
@@ -837,6 +941,7 @@ class MainActivity : Activity() {
                     r.genre?.let { if (it.isNotBlank()) genre = it }
                     durationMs = r.durationMs
                     lyrics = r.lyrics
+                    year = r.year ?: ""
                     tags = r.comment?.let { TagParser.extractTags(it) } ?: emptyList()
                     r.cover?.let { bytes ->
                         if (bytes.isNotEmpty()) {
@@ -861,7 +966,7 @@ class MainActivity : Activity() {
             val len = runCatching { f.length() }.getOrDefault(0L)
             if (len > 0) bitrate = (len * 8 / durationMs).toInt()
         }
-        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year)
     }
 
     /* ---------- контент медиатеки ---------- */
@@ -869,19 +974,40 @@ class MainActivity : Activity() {
     private fun rebuildContent(resetLimit: Boolean = true) {
         if (resetLimit) visibleLimit = 100
         contentBox.removeAllViews()
-        if (currentTab == "menu") { addMenuRows(); highlightCurrent(); return }
-        val back = Button(this); back.text = "⬅ Меню"
-        back.tag = "header"
-        back.setOnClickListener { currentTab = "menu"; subType = null; subValue = null; rebuildContent() }
-        contentBox.addView(back)
+        sideEntries.clear()
+        if (currentTab == "menu") {
+            sidePanel.visibility = View.GONE
+            addMenuRows(); highlightCurrent(); return
+        }
         when (currentTab) {
             "tracks" -> { shown = tracks.sortedBy { it.title }; addTrackRows(shown, "Все треки") }
-            "albums" -> if (subType == "album") addTrackRows(subTracks { it.album == subValue }, "Альбом: $subValue") else addGroups(tracks.groupBy { it.album }, "album", "💿")
-            "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addGroups(tracks.groupBy { it.artist }, "artist", "👤")
-            "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addGroups(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre", "🎼")
+            "albums" -> if (subType == "album") addTrackRows(subTracks { it.album == subValue }, "Альбом: $subValue") else addAlbumRows()
+            "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addNameRows(tracks.groupBy { it.artist }, "artist")
+            "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addNameRows(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre")
             "tags" -> addTagList()
         }
+        buildSidePanel()
         highlightCurrent()
+    }
+
+    private fun buildSidePanel() {
+        sidePanel.removeAllViews()
+        if (sideEntries.isEmpty() || currentTab == "tags" || currentTab == "menu") {
+            sidePanel.visibility = View.GONE
+            return
+        }
+        sidePanel.visibility = View.VISIBLE
+        val letters = sideEntries.map { it.first.uppercase().take(1) }.distinct().sorted()
+        for (letter in letters) {
+            val target = sideEntries.first { it.first.uppercase().take(1) == letter }.second
+            val tv = TextView(this)
+            tv.text = letter
+            tv.textSize = 9f
+            tv.setTextColor(GRAY)
+            tv.gravity = Gravity.CENTER
+            tv.setOnClickListener { contentScroll.smoothScrollTo(0, target.top) }
+            sidePanel.addView(tv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
     }
 
     private fun addPaged(list: List<Track>) {
@@ -901,11 +1027,11 @@ class MainActivity : Activity() {
         val tagCount = tracks.flatMap { it.tags }.distinct().size
 
         val items = listOf(
-            Triple("tracks", "🎵 Треки", "${tracks.size} треков · $durStr"),
-            Triple("albums", "💿 Альбомы", "${tracks.map { it.album }.distinct().size} альбомов"),
-            Triple("artists", "👤 Исполнители", "${tracks.map { it.artist }.distinct().size} исполнителей"),
-            Triple("genres", "🎼 Жанры", "${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size} жанров"),
-            Triple("tags", "🏷 Теги", "$tagCount тегов" + (if (selected.isNotEmpty()) " · выбрано: ${selected.size}" else ""))
+            Triple("tracks", "Треки", "${tracks.size} треков · $durStr"),
+            Triple("albums", "Альбомы", "${tracks.map { it.album }.distinct().size} альбомов"),
+            Triple("artists", "Исполнители", "${tracks.map { it.artist }.distinct().size} исполнителей"),
+            Triple("genres", "Жанры", "${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size} жанров"),
+            Triple("tags", "Теги", "$tagCount тегов" + (if (selected.isNotEmpty()) " · выбрано: ${selected.size}" else ""))
         )
         for ((key, lbl, sub) in items) {
             val row = LinearLayout(this)
@@ -929,7 +1055,7 @@ class MainActivity : Activity() {
         shown = untagged
         if (untagged.isNotEmpty()) {
             val h = TextView(this)
-            h.text = "🧹 Без тегов (${untagged.size}) — долгое нажатие, чтобы повесить хештеги:"
+            h.text = "Без тегов (${untagged.size}) — кнопка бирки на карточке откроет редактор:"
             h.setTextColor(Color.parseColor("#BBBBCC"))
             h.setPadding(0, dp(6), 0, dp(8))
             h.tag = "header"
@@ -948,12 +1074,119 @@ class MainActivity : Activity() {
 
     private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
 
-    private fun addGroups(groups: Map<String, List<Track>>, type: String, icon: String) {
+    /* карточка трека: обложка 1:1 на четыре строки + кнопка редактора справа */
+    private fun addTrackRow(t: Track) {
+        val rowL = LinearLayout(this)
+        rowL.orientation = LinearLayout.HORIZONTAL
+        rowL.gravity = Gravity.CENTER_VERTICAL
+        rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
+        rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        rowL.tag = "track:" + t.uri
+
+        val iv = ImageView(this)
+        iv.scaleType = ImageView.ScaleType.CENTER_CROP
+        iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        bindThumb(iv, t.coverPath)
+        rowL.addView(iv, LinearLayout.LayoutParams(dp(88), dp(88)))
+
+        val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
+        col.setPadding(dp(10), 0, dp(6), 0)
+        val l1 = TextView(this); l1.text = t.title; l1.textSize = 15f; l1.setTextColor(WHITE)
+        l1.setSingleLine(true); l1.ellipsize = TextUtils.TruncateAt.END
+        val l2 = TextView(this); l2.text = t.artist; l2.textSize = 13f; l2.setTextColor(Color.parseColor("#BBBBCC"))
+        l2.setSingleLine(true); l2.ellipsize = TextUtils.TruncateAt.END
+        val l3 = TextView(this); l3.text = t.album + (if (t.year.isNotEmpty()) " · ${t.year}" else "")
+        l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
+        l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
+        val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
+        val fmtB = TextView(this); fmtB.text = "MP3"; fmtB.textSize = 11f; fmtB.setTextColor(WHITE)
+        fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+        val br = TextView(this); br.text = if (t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
+        br.textSize = 11f; br.setTextColor(Color.parseColor("#9A93A8")); br.setPadding(dp(5), 0, 0, 0)
+        val tagsTv = TextView(this)
+        tagsTv.text = t.tags.joinToString(" ") { "#$it" }
+        tagsTv.textSize = 11f; tagsTv.setTextColor(ACCENT)
+        tagsTv.setSingleLine(true); tagsTv.ellipsize = TextUtils.TruncateAt.END
+        tagsTv.setPadding(dp(6), 0, 0, 0)
+        l4.addView(fmtB)
+        l4.addView(br)
+        l4.addView(tagsTv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
+        rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val editBtn = IconView(this); editBtn.icon = "tags"; editBtn.setColor(GRAY)
+        editBtn.background = pressCircle()
+        editBtn.setOnClickListener { openEditor(t) }
+        rowL.addView(editBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
+
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+        rowL.setOnClickListener { play(t) }
+        contentBox.addView(rowL)
+        sideEntries.add(Pair(t.title, rowL))
+    }
+
+    private fun addTrackRows(list: List<Track>, header: String) {
+        shown = list
+        val h = TextView(this); h.text = header
+        h.setTextColor(Color.parseColor("#BBBBCC"))
+        h.setPadding(0, dp(4), 0, dp(8))
+        h.tag = "header"
+        contentBox.addView(h)
+        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
+        addPaged(list)
+    }
+
+    /* карточка альбома: те же габариты, обложка альбома, без эмодзи */
+    private fun addAlbumRows() {
+        shown = emptyList()
+        val groups = tracks.groupBy { it.album }.toSortedMap()
+        if (groups.isEmpty()) { emptyMsg("Пока пусто."); return }
+        for ((name, list) in groups) {
+            val first = list.first()
+            val rowL = LinearLayout(this)
+            rowL.orientation = LinearLayout.HORIZONTAL
+            rowL.gravity = Gravity.CENTER_VERTICAL
+            rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
+            rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+            val iv = ImageView(this)
+            iv.scaleType = ImageView.ScaleType.CENTER_CROP
+            iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            bindThumb(iv, first.coverPath)
+            rowL.addView(iv, LinearLayout.LayoutParams(dp(88), dp(88)))
+            val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
+            col.setPadding(dp(10), 0, dp(6), 0)
+            val l1 = TextView(this); l1.text = name; l1.textSize = 15f; l1.setTextColor(WHITE)
+            l1.setSingleLine(true); l1.ellipsize = TextUtils.TruncateAt.END
+            val artists = list.map { it.artist }.distinct()
+            val l2 = TextView(this); l2.text = if (artists.size == 1) artists[0] else "Разные исполнители"
+            l2.textSize = 13f; l2.setTextColor(Color.parseColor("#BBBBCC"))
+            l2.setSingleLine(true); l2.ellipsize = TextUtils.TruncateAt.END
+            val yr = list.map { it.year }.firstOrNull { it.isNotEmpty() } ?: ""
+            val l3 = TextView(this); l3.text = if (yr.isNotEmpty()) yr else "Год не указан"
+            l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
+            val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
+            val fmtB = TextView(this); fmtB.text = "MP3"; fmtB.textSize = 11f; fmtB.setTextColor(WHITE)
+            fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+            val cnt = TextView(this); cnt.text = "${list.size} треков"; cnt.textSize = 11f
+            cnt.setTextColor(Color.parseColor("#9A93A8")); cnt.setPadding(dp(6), 0, 0, 0)
+            l4.addView(fmtB); l4.addView(cnt)
+            col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
+            rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+            rowL.setOnClickListener { subType = "album"; subValue = name; rebuildContent() }
+            contentBox.addView(rowL)
+            sideEntries.add(Pair(name, rowL))
+        }
+    }
+
+    private fun addNameRows(groups: Map<String, List<Track>>, type: String) {
         shown = emptyList()
         if (groups.isEmpty()) { emptyMsg("Пока пусто."); return }
         for ((name, list) in groups.toSortedMap()) {
             val row = TextView(this)
-            row.text = "$icon $name  (${list.size})"
+            row.text = "$name  (${list.size})"
             row.setPadding(dp(12), dp(12), dp(12), dp(12))
             row.setBackgroundColor(Color.parseColor("#1E1E2A"))
             row.setTextColor(WHITE)
@@ -962,6 +1195,7 @@ class MainActivity : Activity() {
             row.tag = "group"
             row.setOnClickListener { subType = type; subValue = name; rebuildContent() }
             contentBox.addView(row)
+            sideEntries.add(Pair(name, row))
         }
     }
 
@@ -973,20 +1207,21 @@ class MainActivity : Activity() {
 
         if (counts.isEmpty()) {
             shown = emptyList()
-            emptyMsg("Тегов пока нет. Долгое нажатие на трек — добавить теги.")
+            emptyMsg("Тегов пока нет. Кнопка бирки на карточке трека откроет редактор.")
             return
         }
 
         val ordered = selected.toList() + counts.keys.sorted().filter { !selected.contains(it) }
         val flow = FlowLayout(this)
+        flow.centerRows = true
         flow.tag = "header"
         for (tag in ordered) {
             val chip = TextView(this)
             chip.text = "#$tag (${counts[tag]})"
-            chip.setPadding(dp(10), dp(8), dp(10), dp(8))
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8))
             val on = selected.contains(tag)
-            chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
-            chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
+            chip.background = pillBg(if (on) ACCENT else BUBBLE_BG, 99)
+            chip.setTextColor(WHITE)
             val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
             chip.tag = "header"
@@ -1010,56 +1245,12 @@ class MainActivity : Activity() {
         if (shown.isEmpty()) emptyMsg("Пересечение пусто: сними часть тегов.")
     }
 
-    private fun addTrackRows(list: List<Track>, header: String) {
-        shown = list
-        val h = TextView(this); h.text = header
-        h.setTextColor(Color.parseColor("#BBBBCC"))
-        h.setPadding(0, dp(4), 0, dp(8))
-        h.tag = "header"
-        contentBox.addView(h)
-        if (subType != null) {
-            val back = Button(this); back.text = "⬅ Ко всем разделам"
-            back.tag = "header"
-            back.setOnClickListener { subType = null; subValue = null; rebuildContent() }
-            contentBox.addView(back)
-        }
-        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
-        addPaged(list)
-    }
-
     private fun emptyMsg(msg: String) {
         val empty = TextView(this)
         empty.text = msg
         empty.setPadding(0, dp(16), 0, 0)
         empty.tag = "header"
         contentBox.addView(empty)
-    }
-
-    private fun addTrackRow(t: Track) {
-        val rowL = LinearLayout(this)
-        rowL.orientation = LinearLayout.HORIZONTAL
-        rowL.setPadding(dp(10), dp(8), dp(10), dp(8))
-        rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
-        rowL.tag = "track:" + t.uri
-
-        val iv = ImageView(this)
-        iv.scaleType = ImageView.ScaleType.CENTER_CROP
-        iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
-        bindThumb(iv, t.coverPath)
-        rowL.addView(iv, LinearLayout.LayoutParams(dp(46), dp(46)))
-
-        val txt = TextView(this)
-        txt.text = "🎵 ${t.title}\n👤 ${t.artist} · 💿 ${t.album}\n🏷 " +
-            (if (t.tags.isEmpty()) "нет тегов" else t.tags.joinToString(" ") { "#$it" }) + " · ⏱ ${fmt(t.durationMs)}"
-        txt.setPadding(dp(10), dp(2), 0, dp(2))
-        txt.setTextColor(WHITE)
-        rowL.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-
-        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
-        rowL.setOnClickListener { play(t) }
-        rowL.setOnLongClickListener { openEditor(t); true }
-        contentBox.addView(rowL)
     }
 
     private fun highlightCurrent() {
@@ -1073,7 +1264,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ: одна живая кнопка, палитра плеера ---------- */
+    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
 
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
@@ -1110,7 +1301,11 @@ class MainActivity : Activity() {
             .setView(box)
             .setPositiveButton("Закрыть", null)
             .create()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.parseColor("#16121C")))
+        dialog.window?.setBackgroundDrawable(GradientDrawable().apply {
+            setColor(Color.parseColor("#16121C"))
+            cornerRadius = dp(16).toFloat()
+        })
+        dialog.window?.setLayout(resources.displayMetrics.widthPixels - dp(40), WindowManager.LayoutParams.WRAP_CONTENT)
 
         fun refresh() {
             val curT = tracks.find { it.uri == t.uri } ?: t
@@ -1141,13 +1336,16 @@ class MainActivity : Activity() {
         }
 
         dialog.setOnShowListener {
+            dialog.findViewById<TextView>(android.R.id.title)?.setTextColor(WHITE)
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isAllCaps = false
+            btn.textSize = 14f
             btn.setTextColor(WHITE)
             btn.background = pillBg(ACCENT, 99)
+            btn.setPadding(dp(28), dp(10), dp(28), dp(10))
             val blp = btn.layoutParams as LinearLayout.LayoutParams
-            blp.width = LinearLayout.LayoutParams.MATCH_PARENT
-            blp.gravity = android.view.Gravity.CENTER
+            blp.width = LinearLayout.LayoutParams.WRAP_CONTENT
+            blp.gravity = Gravity.CENTER
             blp.setMargins(dp(16), dp(12), dp(16), dp(8))
             btn.layoutParams = blp
             btn.setOnClickListener {
@@ -1241,7 +1439,6 @@ class MainActivity : Activity() {
             }
             tagsRow.addView(chip)
         }
-        /* быстрая волна: строим в фоне, кэш на диске */
         waveView.setPeaks(null)
         waveView.setProgress(0f)
         val uri = PlayerState.uri
@@ -1311,7 +1508,7 @@ class MainActivity : Activity() {
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
         bigCoverUri = null; bigCoverBm = null
         Thread {
-            val small = loadBitmap(t.coverPath, 96)
+            val small = loadBitmap(t.coverPath, 192)
             runOnUiThread { nbCover.setImageBitmap(small) }
         }.start()
         if (playerScreen.visibility == View.VISIBLE) { lastPlayerUri = null; refreshNow() }
