@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -26,7 +25,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
@@ -243,7 +241,7 @@ class MainActivity : Activity() {
     private lateinit var pAlbum: TextView
     private lateinit var pFormat: TextView
     private lateinit var pTagsFlow: FlowLayout
-    private lateinit var seekBar: SeekBar
+    private lateinit var waveView: WaveformView
     private lateinit var tCur: TextView
     private lateinit var tDur: TextView
     private lateinit var shufI: IconView
@@ -274,7 +272,6 @@ class MainActivity : Activity() {
     private var bigCoverBm: Bitmap? = null
     private var bigCoverUri: String? = null
     private var lastPlayerUri: String? = null
-    private var seeking = false
     private val thumbCache = object : LruCache<String, Bitmap>(80) {}
     private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
@@ -285,7 +282,7 @@ class MainActivity : Activity() {
             if (p != null && PlayerState.uri != null) {
                 val pos = p.currentPosition(); val dur = PlayerState.durationMs
                 tCur.text = fmt(pos.toLong()); tDur.text = fmt(dur.toLong())
-                if (!seeking && dur > 0) seekBar.progress = (pos / 1000).coerceIn(0, dur.toInt() / 1000)
+                if (dur > 0) waveView.setProgress(pos.toFloat() / dur)
             }
             handler.postDelayed(this, 400)
         }
@@ -426,30 +423,17 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: ПЛЕЕР ---------- */
+        /* ---------- ЭКРАН: ПЛЕЕР (без кнопки назад) ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(10), dp(14), dp(14))
         playerScreen.visibility = View.GONE
 
-        val pTop = LinearLayout(this); pTop.orientation = LinearLayout.HORIZONTAL
-        pTop.gravity = android.view.Gravity.CENTER_VERTICAL
-        val pBack = TextView(this); pBack.text = "←"; pBack.textSize = 20f
-        pBack.setTextColor(WHITE)
-        pBack.gravity = android.view.Gravity.CENTER
-        pBack.background = pillBg(Color.parseColor("#241638"), 99)
-        pBack.setPadding(dp(14), dp(8), dp(14), dp(8))
-        pBack.setOnClickListener { showLibrary() }
-        pTop.addView(pBack)
         queueCounter = TextView(this); queueCounter.textSize = 13f
         queueCounter.setTextColor(GRAY)
         queueCounter.gravity = android.view.Gravity.CENTER
-        pTop.addView(queueCounter, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val pSpacer = TextView(this); pSpacer.text = "←"; pSpacer.textSize = 20f
-        pSpacer.visibility = View.INVISIBLE
-        pSpacer.setPadding(dp(14), dp(8), dp(14), dp(8))
-        pTop.addView(pSpacer)
-        playerScreen.addView(pTop)
+        queueCounter.setPadding(0, dp(4), 0, 0)
+        playerScreen.addView(queueCounter)
 
         npCover = ImageView(this)
         npCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -486,21 +470,12 @@ class MainActivity : Activity() {
         pTagsFlow.setPadding(dp(6), dp(10), dp(6), 0)
         playerScreen.addView(pTagsFlow)
 
-        seekBar = SeekBar(this)
-        seekBar.progressTintList = ColorStateList.valueOf(ACCENT)
-        seekBar.thumbTintList = ColorStateList.valueOf(ACCENT)
-        seekBar.setPadding(dp(4), dp(14), dp(4), 0)
-        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) tCur.text = fmt(progress * 1000L)
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) { seeking = true }
-            override fun onStopTrackingTouch(sb: SeekBar?) {
-                seeking = false
-                PlayerService.cmd(this@MainActivity, "seek", seekMs = sb!!.progress * 1000)
-            }
-        })
-        playerScreen.addView(seekBar)
+        waveView = WaveformView(this)
+        waveView.onSeek = { f ->
+            val d = PlayerState.durationMs
+            if (d > 0) PlayerService.cmd(this, "seek", seekMs = (f * d).toInt())
+        }
+        playerScreen.addView(waveView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
 
         val times = LinearLayout(this); times.orientation = LinearLayout.HORIZONTAL
         times.gravity = android.view.Gravity.CENTER_VERTICAL
@@ -517,7 +492,6 @@ class MainActivity : Activity() {
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times)
 
-        /* транспорт: лесенка размеров, розовый круг с белым глифом */
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
         transport.gravity = android.view.Gravity.CENTER_VERTICAL
         transport.setPadding(0, dp(10), 0, 0)
@@ -541,7 +515,6 @@ class MainActivity : Activity() {
         transport.addView(repI, LinearLayout.LayoutParams(0, dp(36), 1f))
         playerScreen.addView(transport)
 
-        /* нижний ряд: опущен ниже, колонки под prev / play / next */
         val extraRow = LinearLayout(this); extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.gravity = android.view.Gravity.CENTER_VERTICAL
         extraRow.setPadding(0, dp(28), 0, 0)
@@ -936,7 +909,7 @@ class MainActivity : Activity() {
             val on = selected.contains(tag)
             chip.setBackgroundColor(if (on) Color.parseColor("#7C4DFF") else Color.parseColor("#2A2A3A"))
             chip.setTextColor(if (on) Color.WHITE else Color.parseColor("#BBBBCC"))
-            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
+            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.Margin.WRAP_CONTENT)
             lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
             chip.tag = "header"
             chip.setOnClickListener {
@@ -1170,9 +1143,18 @@ class MainActivity : Activity() {
             if (pTagsFlow.overflowCount == 0) { moreChip.visibility = View.GONE; pTagsFlow.requestLayout() }
             else moreChip.text = "+${pTagsFlow.overflowCount}"
         }
-        val dur = PlayerState.durationMs
-        seekBar.max = (dur.toInt() / 1000).coerceAtLeast(1)
-        if (PlayerState.uri != null) loadBigCover(PlayerState.uri!!)
+        /* быстрая волна: строим в фоне, кэш на диске */
+        waveView.setPeaks(null)
+        waveView.setProgress(0f)
+        val uri = PlayerState.uri
+        val durForWave = t?.durationMs ?: 0L
+        if (uri != null) {
+            Thread {
+                val peaks = WaveformView.getPeaks(this, uri, durForWave)
+                runOnUiThread { if (PlayerState.uri == uri) waveView.setPeaks(peaks) }
+            }.start()
+        }
+        if (uri != null) loadBigCover(uri)
     }
 
     private fun loadBigCover(uri: String) {
