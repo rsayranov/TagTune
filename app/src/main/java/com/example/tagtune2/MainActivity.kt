@@ -12,7 +12,6 @@ import android.graphics.ColorFilter
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
@@ -34,8 +33,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -266,10 +267,11 @@ class MainActivity : Activity() {
     private lateinit var libScreen: LinearLayout
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
+    private lateinit var headTitle: TextView
     private lateinit var status: TextView
     private lateinit var contentBox: LinearLayout
     private lateinit var contentScroll: ScrollView
-    private lateinit var sidePanel: LinearLayout
+    private lateinit var searchInput: EditText
     private lateinit var foldersBox: LinearLayout
     private lateinit var nbCover: ImageView
     private lateinit var nbText: TextView
@@ -315,7 +317,9 @@ class MainActivity : Activity() {
     private var lastPlayerUri: String? = null
     private var scanRunning = false
     private var pullDownY = 0f
-    private val sideEntries = mutableListOf<Pair<String, View>>()
+    private var searchShown = false
+    private var searchQuery = ""
+    private var updatingSearch = false
     private val thumbCache = object : LruCache<String, Bitmap>(80) {}
     private val thumbPool = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
@@ -341,6 +345,12 @@ class MainActivity : Activity() {
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
     private fun cacheFile() = File(filesDir, "library_cache.json")
+    private fun matches(t: Track): Boolean {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) return true
+        return t.title.contains(q, true) || t.artist.contains(q, true) ||
+            t.album.contains(q, true) || t.tags.any { it.contains(q, true) }
+    }
 
     private fun loadBitmap(path: String?, target: Int): Bitmap? {
         if (path == null) return null
@@ -373,6 +383,14 @@ class MainActivity : Activity() {
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
 
+    /* активный трек: только акцентная рамка, без заливки */
+    private fun rowBg(active: Boolean): Drawable? =
+        if (active) GradientDrawable().apply {
+            setColor(Color.TRANSPARENT)
+            setStroke(dp(2), ACCENT)
+            cornerRadius = dp(12).toFloat()
+        } else null
+
     private fun pressCircle(): StateListDrawable {
         val sld = StateListDrawable()
         sld.addState(intArrayOf(android.R.attr.state_pressed), PressCircleDrawable(ACCENT))
@@ -380,7 +398,7 @@ class MainActivity : Activity() {
         return sld
     }
 
-    /* ---------- бегущая строка: авто-бег + ручной скролл ---------- */
+    /* ---------- бегущая строка ---------- */
 
     private fun attachAutoScroll(hsv: HorizontalScrollView) {
         scrollDirs[hsv] = 1
@@ -483,8 +501,9 @@ class MainActivity : Activity() {
 
         val topRow = LinearLayout(this); topRow.orientation = LinearLayout.HORIZONTAL
         topRow.gravity = Gravity.CENTER_VERTICAL
-        val headTitle = TextView(this); headTitle.text = "Медиатека"
+        headTitle = TextView(this); headTitle.text = "Медиатека"
         headTitle.textSize = 26f; headTitle.setTextColor(WHITE)
+        headTitle.setSingleLine(true); headTitle.ellipsize = TextUtils.TruncateAt.END
         topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         val settingsBtn = IconView(this); settingsBtn.icon = "gear"; settingsBtn.setColor(WHITE)
         settingsBtn.background = pressCircle()
@@ -497,26 +516,50 @@ class MainActivity : Activity() {
         status.visibility = View.GONE
         libScreen.addView(status)
 
-        val libFrame = FrameLayout(this)
+        searchInput = EditText(this)
+        searchInput.hint = "Поиск по медиатеке…"
+        searchInput.setSingleLine(true)
+        searchInput.textSize = 14f
+        searchInput.setTextColor(WHITE)
+        searchInput.setHintTextColor(GRAY)
+        searchInput.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#1E1E2A"))
+            cornerRadius = dp(12).toFloat()
+        }
+        searchInput.setPadding(dp(12), dp(10), dp(12), dp(10))
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
+            override fun afterTextChanged(e: Editable?) {
+                val s = e?.toString() ?: ""
+                if (!updatingSearch && s != searchQuery) {
+                    searchQuery = s
+                    rebuildContent(false)
+                    handler.post {
+                        searchInput.requestFocus()
+                        searchInput.setSelection(searchInput.text.length)
+                    }
+                }
+            }
+        })
+
         contentScroll = ScrollView(this)
         contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
-        contentBox.setPadding(0, 0, dp(22), 0)
         contentScroll.addView(contentBox)
-        libFrame.addView(contentScroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        sidePanel = LinearLayout(this)
-        sidePanel.orientation = LinearLayout.VERTICAL
-        sidePanel.setBackgroundColor(Color.argb(200, 13, 10, 18))
-        sidePanel.setPadding(0, dp(4), 0, dp(4))
-        sidePanel.visibility = View.GONE
-        libFrame.addView(sidePanel, FrameLayout.LayoutParams(dp(20), FrameLayout.LayoutParams.MATCH_PARENT, Gravity.END))
-        libScreen.addView(libFrame, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        libScreen.addView(contentScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        /* свайп вниз из верха списка = пересканирование */
+        /* свайп вниз: в меню — перескан, в подразделах — поиск */
         contentScroll.setOnTouchListener { _, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> pullDownY = ev.y
                 MotionEvent.ACTION_MOVE -> {
-                    if (contentScroll.scrollY == 0 && ev.y - pullDownY > dp(90) && !scanRunning) startScan()
+                    if (contentScroll.scrollY == 0 && ev.y - pullDownY > dp(90)) {
+                        if (currentTab == "menu") {
+                            if (!scanRunning) startScan()
+                        } else if (!searchShown) {
+                            revealSearch()
+                        }
+                    }
                 }
             }
             false
@@ -766,10 +809,32 @@ class MainActivity : Activity() {
         when {
             playerScreen.visibility == View.VISIBLE -> showLibrary()
             settingsScreen.visibility == View.VISIBLE -> showLibrary()
-            libScreen.visibility == View.VISIBLE && currentTab != "menu" -> {
-                currentTab = "menu"; subType = null; subValue = null; rebuildContent()
-            }
+            libScreen.visibility == View.VISIBLE && currentTab != "menu" -> goTab("menu")
             else -> super.onBackPressed()
+        }
+    }
+
+    private fun goTab(key: String) {
+        currentTab = key
+        subType = null; subValue = null
+        searchShown = false
+        searchQuery = ""
+        updatingSearch = true
+        searchInput.setText("")
+        updatingSearch = false
+        rebuildContent()
+    }
+
+    private fun revealSearch() {
+        searchShown = true
+        updatingSearch = true
+        searchInput.setText(searchQuery)
+        updatingSearch = false
+        rebuildContent()
+        handler.post {
+            searchInput.requestFocus()
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
         }
     }
 
@@ -974,40 +1039,63 @@ class MainActivity : Activity() {
     private fun rebuildContent(resetLimit: Boolean = true) {
         if (resetLimit) visibleLimit = 100
         contentBox.removeAllViews()
-        sideEntries.clear()
+        headTitle.text = when {
+            currentTab == "menu" -> "Медиатека"
+            subType != null -> subValue ?: ""
+            currentTab == "tracks" -> "Треки"
+            currentTab == "albums" -> "Альбомы"
+            currentTab == "artists" -> "Исполнители"
+            currentTab == "genres" -> "Жанры"
+            else -> "Теги"
+        }
         if (currentTab == "menu") {
-            sidePanel.visibility = View.GONE
             addMenuRows(); highlightCurrent(); return
         }
+        if (searchShown) {
+            (searchInput.parent as? ViewGroup)?.removeView(searchInput)
+            val slp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            slp.setMargins(0, dp(4), 0, dp(10))
+            contentBox.addView(searchInput, slp)
+        }
+        val q = searchQuery.trim()
         when (currentTab) {
-            "tracks" -> { shown = tracks.sortedBy { it.title }; addTrackRows(shown, "Все треки") }
-            "albums" -> if (subType == "album") addTrackRows(subTracks { it.album == subValue }, "Альбом: $subValue") else addAlbumRows()
-            "artists" -> if (subType == "artist") addTrackRows(subTracks { it.artist == subValue }, "Исполнитель: $subValue") else addNameRows(tracks.groupBy { it.artist }, "artist")
-            "genres" -> if (subType == "genre") addTrackRows(subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue }, "Жанр: $subValue") else addNameRows(tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }, "genre")
+            "tracks" -> {
+                shown = tracks.filter { matches(it) }.sortedBy { it.title }
+                addTrackRows(shown)
+            }
+            "albums" -> {
+                if (subType == "album") {
+                    shown = subTracks { it.album == subValue && matches(it) }
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.album }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    addAlbumRows(groups)
+                }
+            }
+            "artists" -> {
+                if (subType == "artist") {
+                    shown = subTracks { it.artist == subValue && matches(it) }
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.artist }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    addNameRows(groups, "artist")
+                }
+            }
+            "genres" -> {
+                if (subType == "genre") {
+                    shown = subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue && matches(it) }
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    addNameRows(groups, "genre")
+                }
+            }
             "tags" -> addTagList()
         }
-        buildSidePanel()
         highlightCurrent()
-    }
-
-    private fun buildSidePanel() {
-        sidePanel.removeAllViews()
-        if (sideEntries.isEmpty() || currentTab == "tags" || currentTab == "menu") {
-            sidePanel.visibility = View.GONE
-            return
-        }
-        sidePanel.visibility = View.VISIBLE
-        val letters = sideEntries.map { it.first.uppercase().take(1) }.distinct().sorted()
-        for (letter in letters) {
-            val target = sideEntries.first { it.first.uppercase().take(1) == letter }.second
-            val tv = TextView(this)
-            tv.text = letter
-            tv.textSize = 9f
-            tv.setTextColor(GRAY)
-            tv.gravity = Gravity.CENTER
-            tv.setOnClickListener { contentScroll.smoothScrollTo(0, target.top) }
-            sidePanel.addView(tv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        }
     }
 
     private fun addPaged(list: List<Track>) {
@@ -1047,7 +1135,7 @@ class MainActivity : Activity() {
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, 0, dp(10)); row.layoutParams = lp
             row.tag = "header"
-            row.setOnClickListener { currentTab = key; subType = null; subValue = null; rebuildContent() }
+            row.setOnClickListener { goTab(key) }
             contentBox.addView(row)
         }
 
@@ -1074,20 +1162,20 @@ class MainActivity : Activity() {
 
     private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
 
-    /* карточка трека: обложка 1:1 на четыре строки + кнопка редактора справа */
+    /* карточка трека: чёрное поле, обложка 1:1 на четыре строки, кнопка редактора справа */
     private fun addTrackRow(t: Track) {
         val rowL = LinearLayout(this)
         rowL.orientation = LinearLayout.HORIZONTAL
         rowL.gravity = Gravity.CENTER_VERTICAL
         rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
-        rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        rowL.background = rowBg(t.uri == PlayerState.uri)
         rowL.tag = "track:" + t.uri
 
         val iv = ImageView(this)
         iv.scaleType = ImageView.ScaleType.CENTER_CROP
         iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
         bindThumb(iv, t.coverPath)
-        rowL.addView(iv, LinearLayout.LayoutParams(dp(88), dp(88)))
+        rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
 
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
         col.setPadding(dp(10), 0, dp(6), 0)
@@ -1123,37 +1211,30 @@ class MainActivity : Activity() {
         lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
         rowL.setOnClickListener { play(t) }
         contentBox.addView(rowL)
-        sideEntries.add(Pair(t.title, rowL))
     }
 
-    private fun addTrackRows(list: List<Track>, header: String) {
+    private fun addTrackRows(list: List<Track>) {
         shown = list
-        val h = TextView(this); h.text = header
-        h.setTextColor(Color.parseColor("#BBBBCC"))
-        h.setPadding(0, dp(4), 0, dp(8))
-        h.tag = "header"
-        contentBox.addView(h)
-        if (list.isEmpty()) { emptyMsg("Здесь пусто."); return }
+        if (list.isEmpty()) { emptyMsg("Ничего не найдено."); return }
         addPaged(list)
     }
 
-    /* карточка альбома: те же габариты, обложка альбома, без эмодзи */
-    private fun addAlbumRows() {
+    /* карточка альбома: чёрное поле, обложка альбома */
+    private fun addAlbumRows(groups: Map<String, List<Track>>) {
         shown = emptyList()
-        val groups = tracks.groupBy { it.album }.toSortedMap()
-        if (groups.isEmpty()) { emptyMsg("Пока пусто."); return }
+        if (groups.isEmpty()) { emptyMsg("Ничего не найдено."); return }
         for ((name, list) in groups) {
             val first = list.first()
             val rowL = LinearLayout(this)
             rowL.orientation = LinearLayout.HORIZONTAL
             rowL.gravity = Gravity.CENTER_VERTICAL
             rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
-            rowL.setBackgroundColor(Color.parseColor("#1E1E2A"))
+            rowL.background = null
             val iv = ImageView(this)
             iv.scaleType = ImageView.ScaleType.CENTER_CROP
             iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
             bindThumb(iv, first.coverPath)
-            rowL.addView(iv, LinearLayout.LayoutParams(dp(88), dp(88)))
+            rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
             val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
             col.setPadding(dp(10), 0, dp(6), 0)
             val l1 = TextView(this); l1.text = name; l1.textSize = 15f; l1.setTextColor(WHITE)
@@ -1175,27 +1256,35 @@ class MainActivity : Activity() {
             rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
-            rowL.setOnClickListener { subType = "album"; subValue = name; rebuildContent() }
+            rowL.setOnClickListener {
+                subType = "album"; subValue = name
+                searchShown = false; searchQuery = ""
+                updatingSearch = true; searchInput.setText(""); updatingSearch = false
+                rebuildContent()
+            }
             contentBox.addView(rowL)
-            sideEntries.add(Pair(name, rowL))
         }
     }
 
     private fun addNameRows(groups: Map<String, List<Track>>, type: String) {
         shown = emptyList()
-        if (groups.isEmpty()) { emptyMsg("Пока пусто."); return }
-        for ((name, list) in groups.toSortedMap()) {
+        if (groups.isEmpty()) { emptyMsg("Ничего не найдено."); return }
+        for ((name, list) in groups) {
             val row = TextView(this)
             row.text = "$name  (${list.size})"
             row.setPadding(dp(12), dp(12), dp(12), dp(12))
-            row.setBackgroundColor(Color.parseColor("#1E1E2A"))
+            row.background = null
             row.setTextColor(WHITE)
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
             row.tag = "group"
-            row.setOnClickListener { subType = type; subValue = name; rebuildContent() }
+            row.setOnClickListener {
+                subType = type; subValue = name
+                searchShown = false; searchQuery = ""
+                updatingSearch = true; searchInput.setText(""); updatingSearch = false
+                rebuildContent()
+            }
             contentBox.addView(row)
-            sideEntries.add(Pair(name, row))
         }
     }
 
@@ -1204,14 +1293,16 @@ class MainActivity : Activity() {
         val counts = mutableMapOf<String, Int>()
         for (t in base) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
         for (g in selected) if (!counts.containsKey(g)) counts[g] = 0
+        val q = searchQuery.trim()
+        val visibleTags = counts.keys.filter { q.isEmpty() || it.contains(q, true) }
 
-        if (counts.isEmpty()) {
+        if (visibleTags.isEmpty()) {
             shown = emptyList()
-            emptyMsg("Тегов пока нет. Кнопка бирки на карточке трека откроет редактор.")
+            emptyMsg(if (counts.isEmpty()) "Тегов пока нет. Кнопка бирки на карточке трека откроет редактор." else "Ничего не найдено.")
             return
         }
 
-        val ordered = selected.toList() + counts.keys.sorted().filter { !selected.contains(it) }
+        val ordered = selected.filter { visibleTags.contains(it) } + visibleTags.sorted().filter { !selected.contains(it) }
         val flow = FlowLayout(this)
         flow.centerRows = true
         flow.tag = "header"
@@ -1233,7 +1324,7 @@ class MainActivity : Activity() {
         }
         contentBox.addView(flow)
 
-        shown = base.shuffled()
+        shown = base.filter { matches(it) }.shuffled()
         val h = TextView(this)
         h.text = if (selected.isEmpty()) "Плейлист: все треки (${shown.size}), шафл"
                  else "Пересечение ${selected.joinToString(" ∩ ") { "#$it" }}: ${shown.size}, шафл"
@@ -1259,7 +1350,7 @@ class MainActivity : Activity() {
             val v = contentBox.getChildAt(i)
             val tag = v.tag as? String ?: continue
             if (tag.startsWith("track:")) {
-                v.setBackgroundColor(if (tag == cur) Color.parseColor("#3A2A5A") else Color.parseColor("#1E1E2A"))
+                v.background = rowBg(tag == cur)
             }
         }
     }
