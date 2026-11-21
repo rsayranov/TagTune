@@ -413,7 +413,7 @@ class MainActivity : Activity() {
     private fun marqueeText(size: Float, color: Int): Pair<HorizontalScrollView, TextView> {
         val hsv = HorizontalScrollView(this)
         hsv.isHorizontalScrollBarEnabled = false
-        hsv.fillViewport = true
+        hsv.setFillViewport(true)
         val tv = TextView(this)
         tv.textSize = size
         tv.setTextColor(color)
