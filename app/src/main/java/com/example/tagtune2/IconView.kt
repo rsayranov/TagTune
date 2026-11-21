@@ -7,7 +7,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
 
-/* ---------- пиктограммы в оптике YouTube Music: залитые глифы + тонкие режимы ---------- */
+/* ---------- пиктограммы в оптике YouTube Music: тонкие режимы, залитые стрелки ---------- */
 class IconView(context: Context) : View(context) {
     var icon: String = "play"
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -19,9 +19,10 @@ class IconView(context: Context) : View(context) {
         var s = minOf(width, height).toFloat()
         if (s <= 0f) return
         s *= when (icon) {
-            "shuffle", "shuffleOff", "repeat", "repeat1" -> 0.82f
-            "prev", "next" -> 0.84f
-            "queue", "lyrics", "tags" -> 0.72f
+            "shuffle", "shuffleOff", "repeat", "repeat1" -> 0.72f
+            "prev", "next" -> 0.80f
+            "play", "pause" -> 0.62f
+            "queue", "lyrics", "tags" -> 0.66f
             else -> 1f
         }
         val c = width / 2f; val cy = height / 2f
@@ -32,43 +33,43 @@ class IconView(context: Context) : View(context) {
             "play" -> {
                 paint.style = Paint.Style.FILL
                 val p = Path()
-                p.moveTo(c - s * 0.17f, cy - s * 0.30f)
-                p.lineTo(c - s * 0.17f, cy + s * 0.30f)
-                p.lineTo(c + s * 0.35f, cy)
+                p.moveTo(c - s * 0.12f, cy - s * 0.24f)
+                p.lineTo(c - s * 0.12f, cy + s * 0.24f)
+                p.lineTo(c + s * 0.30f, cy)
                 p.close()
                 canvas.drawPath(p, paint)
             }
             "pause" -> {
                 paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c - s * 0.19f, cy - s * 0.30f, c - s * 0.07f, cy + s * 0.30f), s * 0.03f, s * 0.03f, paint)
-                canvas.drawRoundRect(RectF(c + s * 0.07f, cy - s * 0.30f, c + s * 0.19f, cy + s * 0.30f), s * 0.03f, s * 0.03f, paint)
+                canvas.drawRoundRect(RectF(c - s * 0.16f, cy - s * 0.24f, c - s * 0.06f, cy + s * 0.24f), s * 0.03f, s * 0.03f, paint)
+                canvas.drawRoundRect(RectF(c + s * 0.06f, cy - s * 0.24f, c + s * 0.16f, cy + s * 0.24f), s * 0.03f, s * 0.03f, paint)
             }
             "prev" -> {
                 paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c - s * 0.30f, cy - s * 0.28f, c - s * 0.22f, cy + s * 0.28f), s * 0.03f, s * 0.03f, paint)
+                canvas.drawRoundRect(RectF(c - s * 0.30f, cy - s * 0.26f, c - s * 0.23f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
                 val p = Path()
-                p.moveTo(c + s * 0.28f, cy - s * 0.28f); p.lineTo(c + s * 0.28f, cy + s * 0.28f); p.lineTo(c - s * 0.14f, cy); p.close()
+                p.moveTo(c + s * 0.26f, cy - s * 0.26f); p.lineTo(c + s * 0.26f, cy + s * 0.26f); p.lineTo(c - s * 0.14f, cy); p.close()
                 canvas.drawPath(p, paint)
             }
             "next" -> {
                 paint.style = Paint.Style.FILL
-                canvas.drawRoundRect(RectF(c + s * 0.22f, cy - s * 0.28f, c + s * 0.30f, cy + s * 0.28f), s * 0.03f, s * 0.03f, paint)
+                canvas.drawRoundRect(RectF(c + s * 0.23f, cy - s * 0.26f, c + s * 0.30f, cy + s * 0.26f), s * 0.03f, s * 0.03f, paint)
                 val p = Path()
-                p.moveTo(c - s * 0.28f, cy - s * 0.28f); p.lineTo(c - s * 0.28f, cy + s * 0.28f); p.lineTo(c + s * 0.14f, cy); p.close()
+                p.moveTo(c - s * 0.26f, cy - s * 0.26f); p.lineTo(c - s * 0.26f, cy + s * 0.26f); p.lineTo(c + s * 0.14f, cy); p.close()
                 canvas.drawPath(p, paint)
             }
             "shuffle", "shuffleOff" -> {
                 paint.style = Paint.Style.STROKE
                 val p = Path()
-                p.moveTo(c - s * 0.30f, cy + s * 0.16f); p.lineTo(c - s * 0.12f, cy + s * 0.16f); p.lineTo(c + s * 0.10f, cy - s * 0.16f); p.lineTo(c + s * 0.20f, cy - s * 0.16f)
-                p.moveTo(c - s * 0.30f, cy - s * 0.16f); p.lineTo(c - s * 0.12f, cy - s * 0.16f); p.lineTo(c + s * 0.10f, cy + s * 0.16f); p.lineTo(c + s * 0.20f, cy + s * 0.16f)
+                p.moveTo(c - s * 0.32f, cy + s * 0.14f); p.lineTo(c - s * 0.12f, cy + s * 0.14f); p.lineTo(c + s * 0.12f, cy - s * 0.14f); p.lineTo(c + s * 0.20f, cy - s * 0.14f)
+                p.moveTo(c - s * 0.32f, cy - s * 0.14f); p.lineTo(c - s * 0.12f, cy - s * 0.14f); p.lineTo(c + s * 0.12f, cy + s * 0.14f); p.lineTo(c + s * 0.20f, cy + s * 0.14f)
                 canvas.drawPath(p, paint)
                 paint.style = Paint.Style.FILL
                 val h1 = Path()
-                h1.moveTo(c + s * 0.18f, cy - s * 0.23f); h1.lineTo(c + s * 0.18f, cy - s * 0.09f); h1.lineTo(c + s * 0.32f, cy - s * 0.16f); h1.close()
+                h1.moveTo(c + s * 0.19f, cy - s * 0.20f); h1.lineTo(c + s * 0.19f, cy - s * 0.08f); h1.lineTo(c + s * 0.32f, cy - s * 0.14f); h1.close()
                 canvas.drawPath(h1, paint)
                 val h2 = Path()
-                h2.moveTo(c + s * 0.18f, cy + s * 0.09f); h2.lineTo(c + s * 0.18f, cy + s * 0.23f); h2.lineTo(c + s * 0.32f, cy + s * 0.16f); h2.close()
+                h2.moveTo(c + s * 0.19f, cy + s * 0.08f); h2.lineTo(c + s * 0.19f, cy + s * 0.20f); h2.lineTo(c + s * 0.32f, cy + s * 0.14f); h2.close()
                 canvas.drawPath(h2, paint)
                 if (icon == "shuffleOff") {
                     paint.style = Paint.Style.STROKE
@@ -78,27 +79,23 @@ class IconView(context: Context) : View(context) {
             "repeat", "repeat1" -> {
                 paint.style = Paint.Style.STROKE
                 val p1 = Path()
-                p1.moveTo(c - s * 0.26f, cy - s * 0.02f)
-                p1.lineTo(c - s * 0.26f, cy - s * 0.10f)
-                p1.quadTo(c - s * 0.26f, cy - s * 0.16f, c - s * 0.18f, cy - s * 0.16f)
+                p1.moveTo(c - s * 0.14f, cy - s * 0.16f)
                 p1.lineTo(c + s * 0.18f, cy - s * 0.16f)
-                p1.quadTo(c + s * 0.26f, cy - s * 0.16f, c + s * 0.26f, cy - s * 0.10f)
-                p1.lineTo(c + s * 0.26f, cy + s * 0.02f)
+                p1.quadTo(c + s * 0.28f, cy - s * 0.16f, c + s * 0.28f, cy - s * 0.06f)
+                p1.lineTo(c + s * 0.28f, cy + s * 0.04f)
                 canvas.drawPath(p1, paint)
                 val p2 = Path()
-                p2.moveTo(c + s * 0.26f, cy + s * 0.02f)
-                p2.lineTo(c + s * 0.26f, cy + s * 0.10f)
-                p2.quadTo(c + s * 0.26f, cy + s * 0.16f, c + s * 0.18f, cy + s * 0.16f)
+                p2.moveTo(c + s * 0.14f, cy + s * 0.16f)
                 p2.lineTo(c - s * 0.18f, cy + s * 0.16f)
-                p2.quadTo(c - s * 0.26f, cy + s * 0.16f, c - s * 0.26f, cy + s * 0.10f)
-                p2.lineTo(c - s * 0.26f, cy - s * 0.02f)
+                p2.quadTo(c - s * 0.28f, cy + s * 0.16f, c - s * 0.28f, cy + s * 0.06f)
+                p2.lineTo(c - s * 0.28f, cy - s * 0.04f)
                 canvas.drawPath(p2, paint)
                 paint.style = Paint.Style.FILL
                 val a1 = Path()
-                a1.moveTo(c + s * 0.18f, cy + s * 0.00f); a1.lineTo(c + s * 0.34f, cy + s * 0.00f); a1.lineTo(c + s * 0.26f, cy + s * 0.16f); a1.close()
+                a1.moveTo(c + s * 0.21f, cy + s * 0.02f); a1.lineTo(c + s * 0.35f, cy + s * 0.02f); a1.lineTo(c + s * 0.28f, cy + s * 0.16f); a1.close()
                 canvas.drawPath(a1, paint)
                 val a2 = Path()
-                a2.moveTo(c - s * 0.34f, cy - s * 0.00f); a2.lineTo(c - s * 0.18f, cy - s * 0.00f); a2.lineTo(c - s * 0.26f, cy - s * 0.16f); a2.close()
+                a2.moveTo(c - s * 0.35f, cy - s * 0.02f); a2.lineTo(c - s * 0.21f, cy - s * 0.02f); a2.lineTo(c - s * 0.28f, cy - s * 0.16f); a2.close()
                 canvas.drawPath(a2, paint)
                 if (icon == "repeat1") {
                     paint.textSize = s * 0.26f
