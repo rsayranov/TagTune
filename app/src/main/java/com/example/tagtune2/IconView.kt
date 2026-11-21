@@ -27,6 +27,7 @@ class IconView(context: Context) : View(context) {
             "prev", "next" -> 0.80f
             "play", "pause" -> 0.62f
             "queue", "lyrics", "tags" -> 0.66f
+            "gear" -> 0.90f
             else -> 1f
         }
         val c = width / 2f; val cy = height / 2f
@@ -160,6 +161,17 @@ class IconView(context: Context) : View(context) {
                 paint.strokeWidth = s * 0.09f
                 canvas.drawPath(p, paint)
                 canvas.restore()
+            }
+            "gear" -> {
+                paint.style = Paint.Style.STROKE
+                canvas.drawCircle(c, cy, s * 0.17f, paint)
+                for (k in 0..7) {
+                    val a = Math.toRadians(k * 45.0)
+                    val ca = Math.cos(a).toFloat(); val sa = Math.sin(a).toFloat()
+                    canvas.drawLine(c + ca * s * 0.24f, cy + sa * s * 0.24f, c + ca * s * 0.32f, cy + sa * s * 0.32f, paint)
+                }
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(c, cy, s * 0.06f, paint)
             }
         }
     }
