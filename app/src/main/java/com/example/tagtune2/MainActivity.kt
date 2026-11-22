@@ -44,7 +44,6 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -56,11 +55,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
-import com.mpatric.mp3agic.ID3v24Tag
-import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
-import org.jaudiotagger.audio.AudioFileIO
-import org.jaudiotagger.tag.FieldKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -88,7 +83,6 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
     var centerRows = false
-
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         overflowCount = 0
@@ -112,7 +106,6 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
         val height = if (hMode == MeasureSpec.EXACTLY) hSize else posY + rowH + paddingBottom
         setMeasuredDimension(width, height)
     }
-
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val width = r - l
         val rows = mutableListOf<MutableList<View>>()
@@ -147,7 +140,6 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
             posY += rowH
         }
     }
-
     override fun generateLayoutParams(attrs: android.util.AttributeSet?): LayoutParams = MarginLayoutParams(context, attrs)
     override fun generateDefaultLayoutParams(): LayoutParams = MarginLayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
     override fun generateLayoutParams(p: LayoutParams?): LayoutParams = MarginLayoutParams(p)
@@ -160,7 +152,6 @@ object Id3Reader {
         val title: String?, val artist: String?, val album: String?,
         val genre: String?, val durationMs: Long, val lyrics: String?, val year: String?
     )
-
     fun read(ins: InputStream): Result? {
         val hdr = ByteArray(10)
         if (ins.read(hdr) != 10) return null
@@ -189,8 +180,7 @@ object Id3Reader {
                           else int4(tag[p + 4], tag[p + 5], tag[p + 6], tag[p + 7])
                 p += 10
                 if (fsz <= 0 || p + fsz > size) break
-                val body = tag.copyOfRange(p, p + fsz)
-                p += fsz
+                val body = tag.copyOfRange(p, p + fsz); p += fsz
                 when (id) {
                     "COMM" -> if (comment == null) comment = decodeComm(body)
                     "APIC" -> if (cover == null) cover = decodeApic(body, false)
@@ -208,8 +198,7 @@ object Id3Reader {
                 val fsz = ((tag[p + 3].toInt() and 0xFF) shl 16) or ((tag[p + 4].toInt() and 0xFF) shl 8) or (tag[p + 5].toInt() and 0xFF)
                 p += 6
                 if (fsz <= 0 || p + fsz > size) break
-                val body = tag.copyOfRange(p, p + fsz)
-                p += fsz
+                val body = tag.copyOfRange(p, p + fsz); p += fsz
                 when (id) {
                     "COM" -> if (comment == null) comment = decodeComm(body)
                     "PIC" -> if (cover == null) cover = decodeApic(body, true)
@@ -223,13 +212,10 @@ object Id3Reader {
         }
         return Result(comment, cover, title, artist, album, genre, dur, lyrics, year)
     }
-
     private fun synch(a: Byte, b: Byte, c: Byte, d: Byte) =
         ((a.toInt() and 0x7F) shl 21) or ((b.toInt() and 0x7F) shl 14) or ((c.toInt() and 0x7F) shl 7) or (d.toInt() and 0x7F)
-
     private fun int4(a: Byte, b: Byte, c: Byte, d: Byte) =
         ((a.toInt() and 0xFF) shl 24) or ((b.toInt() and 0xFF) shl 16) or ((c.toInt() and 0xFF) shl 8) or (d.toInt() and 0xFF)
-
     private fun skipTerminator(b: ByteArray, from: Int, enc: Int): Int {
         if (enc == 1 || enc == 2) {
             var i = from
@@ -240,23 +226,19 @@ object Id3Reader {
         while (i < b.size) { if (b[i].toInt() == 0) return i + 1; i++ }
         return b.size
     }
-
     private fun decodeText(b: ByteArray, from: Int, to: Int, enc: Int): String = try {
         val cs = when (enc) { 1 -> Charsets.UTF_16; 2 -> Charsets.UTF_16BE; 3 -> Charsets.UTF_8; else -> Charsets.ISO_8859_1 }
         String(b, from, maxOf(0, to - from), cs).trimEnd(' ')
     } catch (e: Exception) { "" }
-
     private fun decodeTextFrame(body: ByteArray): String? {
         if (body.isEmpty()) return null
         return decodeText(body, 1, body.size, body[0].toInt() and 0xFF)
     }
-
     private fun decodeComm(body: ByteArray): String? {
         if (body.size < 5) return null
         val enc = body[0].toInt() and 0xFF
         return decodeText(body, skipTerminator(body, 4, enc), body.size, enc)
     }
-
     private fun decodeApic(body: ByteArray, v2: Boolean): ByteArray? {
         if (body.size < 4) return null
         val enc = body[0].toInt() and 0xFF
@@ -284,7 +266,7 @@ class MainActivity : Activity() {
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
     private val LOSSY_ORANGE = Color.parseColor("#FF9800")
-    private val CACHE_VER = 3
+    private val CACHE_VER = 4
     private val HEAD_BYTES = 1024 * 1024
     private val AUDIO_EXTS = setOf("mp3", "flac", "ogg", "oga", "opus")
     private val SEARCH_PULL_DP = 44
@@ -294,6 +276,7 @@ class MainActivity : Activity() {
     private lateinit var playerScreen: LinearLayout
     private lateinit var settingsScreen: LinearLayout
     private lateinit var headTitle: TextView
+    private lateinit var sortBtn: IconView
     private lateinit var status: TextView
     private lateinit var contentBox: LinearLayout
     private lateinit var rowsBox: LinearLayout
@@ -336,7 +319,8 @@ class MainActivity : Activity() {
         val album: String = "Неизвестный альбом", val genre: String = "",
         val durationMs: Long = 0, val bitrateKbps: Int = 0, val lyrics: String? = null,
         val year: String = "", val format: String = "MP3",
-        val sampleRateHz: Int = 0, val bitDepth: Int = 0
+        val sampleRateHz: Int = 0, val bitDepth: Int = 0,
+        val fileSize: Long = 0, val fileMod: Long = 0
     )
 
     private var tracks = listOf<Track>()
@@ -614,6 +598,92 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private fun openSortDialog(section: String) {
+        val isList = section in listOf("tracks", "recent", "top")
+        val options = if (isList) {
+            arrayOf("По названию", "По году", "По длительности", "По битрейту")
+        } else {
+            arrayOf("По имени", "По количеству")
+        }
+        val key = "sort_$section"
+        val current = prefs().getInt(key, 0).coerceIn(0, options.size - 1)
+        AlertDialog.Builder(this)
+            .setTitle("Сортировка")
+            .setSingleChoiceItems(options, current) { d, which ->
+                prefs().edit().putInt(key, which).apply()
+                d.dismiss()
+                rebuildContent(false)
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun openDuplicatesDialog() {
+        val groups = tracks.groupBy { "${it.title.lowercase()}|${it.artist.lowercase()}" }
+            .filter { it.value.size > 1 }
+            .values.sortedByDescending { it.size }
+        if (groups.isEmpty()) {
+            Toast.makeText(this, "Дубликатов не найдено", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val scroll = ScrollView(this)
+        val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(16), dp(8), dp(16), dp(8))
+        for (g in groups) {
+            val header = TextView(this)
+            header.text = "${g.first().title} — ${g.first().artist} (${g.size})"
+            header.setTextColor(ACCENT)
+            header.textSize = 14f
+            header.setPadding(0, dp(8), 0, dp(4))
+            box.addView(header)
+            for (t in g) {
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.gravity = Gravity.CENTER_VERTICAL
+                val tv = TextView(this)
+                tv.text = "${t.format} · ${specsString(t)} · ${t.album}"
+                tv.setTextColor(WHITE)
+                tv.textSize = 12f
+                row.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                val del = Button(this)
+                del.text = "🗑"
+                del.setTextColor(Color.parseColor("#FF6B6B"))
+                del.background = pressCircle()
+                del.setOnClickListener {
+                    AlertDialog.Builder(this)
+                        .setTitle("Удалить файл?")
+                        .setMessage("${t.title}\n${t.artist}")
+                        .setPositiveButton("Удалить") { _, _ ->
+                            Thread {
+                                val df = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))
+                                val ok = df?.delete() == true
+                                runOnUiThread {
+                                    if (ok) {
+                                        tracks = tracks.filter { it.uri != t.uri }
+                                        saveLibraryCache()
+                                        rebuildContent()
+                                        Toast.makeText(this, "Удалено", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(this, "Не удалось удалить", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }.start()
+                        }
+                        .setNegativeButton("Отмена", null)
+                        .show()
+                }
+                row.addView(del, LinearLayout.LayoutParams(dp(36), dp(36)))
+                box.addView(row)
+            }
+        }
+        scroll.addView(box)
+        AlertDialog.Builder(this)
+            .setTitle("Дубликаты")
+            .setView(scroll)
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
     private fun saveLibraryCache() {
         try {
             val arr = JSONArray()
@@ -623,6 +693,7 @@ class MainActivity : Activity() {
                 o.put("album", t.album); o.put("genre", t.genre); o.put("dur", t.durationMs)
                 o.put("br", t.bitrateKbps); o.put("yr", t.year); o.put("fmt", t.format)
                 o.put("sr", t.sampleRateHz); o.put("bd", t.bitDepth)
+                o.put("sz", t.fileSize); o.put("mod", t.fileMod)
                 if (t.lyrics != null) o.put("lyr", t.lyrics) else o.put("lyr", JSONObject.NULL)
                 o.put("tags", JSONArray(t.tags))
                 if (t.coverPath != null) o.put("cover", t.coverPath) else o.put("cover", JSONObject.NULL)
@@ -649,7 +720,8 @@ class MainActivity : Activity() {
                     o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
                     o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
                     o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", ""),
-                    o.optString("fmt", "MP3"), o.optInt("sr", 0), o.optInt("bd", 0)
+                    o.optString("fmt", "MP3"), o.optInt("sr", 0), o.optInt("bd", 0),
+                    o.optLong("sz", 0), o.optLong("mod", 0)
                 ))
             }
             out
@@ -681,6 +753,11 @@ class MainActivity : Activity() {
         headTitle.textSize = 26f; headTitle.setTextColor(WHITE)
         headTitle.setSingleLine(true); headTitle.ellipsize = TextUtils.TruncateAt.END
         topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        sortBtn = IconView(this); sortBtn.icon = "queue"; sortBtn.setColor(WHITE)
+        sortBtn.background = pressCircle()
+        sortBtn.setOnClickListener { openSortForCurrent() }
+        sortBtn.visibility = View.GONE
+        topRow.addView(sortBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
         val settingsBtn = IconView(this); settingsBtn.icon = "sliders"; settingsBtn.setColor(WHITE)
         settingsBtn.background = pressCircle()
         settingsBtn.setOnClickListener { showSettings() }
@@ -758,10 +835,7 @@ class MainActivity : Activity() {
 
         val nbGd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
-                showPlayer()
-                return true
-            }
+            override fun onSingleTapUp(e: MotionEvent): Boolean { showPlayer(); return true }
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 val dx = e2.x - (e1?.x ?: e2.x)
                 val dy = e2.y - (e1?.y ?: e2.y)
@@ -800,8 +874,7 @@ class MainActivity : Activity() {
         nbSpecs = TextView(this); nbSpecs.textSize = 11f
         nbSpecs.setTextColor(WHITE)
         nbSpecs.setPadding(dp(6), 0, 0, 0)
-        nbFmtRow.addView(nbFormat)
-        nbFmtRow.addView(nbSpecs)
+        nbFmtRow.addView(nbFormat); nbFmtRow.addView(nbSpecs)
         nbInfo.addView(nbFmtRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         nbBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -1017,6 +1090,7 @@ class MainActivity : Activity() {
         sBox.addView(settingsRow("🔄 Пересканировать") { startScan() })
         sBox.addView(settingsRow("🎨 Акцент: " + ACCENT_NAMES[prefs().getInt("accent_idx", 0).coerceIn(0, ACCENT_NAMES.size - 1)]) { openAccentDialog() })
         sBox.addView(settingsRow("📋 Логи ошибок") { openCrashLogDialog() })
+        sBox.addView(settingsRow("🗑 Найти дубликаты") { openDuplicatesDialog() })
 
         root.addView(settingsScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
@@ -1030,6 +1104,17 @@ class MainActivity : Activity() {
             status.text = "Первый запуск: выбери папку с музыкой"
             pickFolder()
         } else startScan()
+    }
+
+    private fun openSortForCurrent() {
+        val section = when (currentTab) {
+            "tracks", "recent", "top" -> currentTab
+            "albums" -> if (subType == "album") "tracks" else "albums"
+            "artists" -> if (subType == "artist") "tracks" else "artists"
+            "genres" -> if (subType == "genre") "tracks" else "genres"
+            else -> null
+        }
+        if (section != null) openSortDialog(section)
     }
 
     private fun showCoverBig(bm: Bitmap?) {
@@ -1108,6 +1193,22 @@ class MainActivity : Activity() {
         marqueeHandler.removeCallbacksAndMessages(null)
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_TREE && resultCode == RESULT_OK && data?.data != null) {
+            val uri = data.data!!
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (e: Exception) { }
+            trees.add(uri.toString())
+            prefs().edit().putStringSet("trees", trees).apply()
+            if (settingsScreen.visibility == View.VISIBLE) renderFolders()
+            startScan()
+        } else if (requestCode == TagEditorDialog.REQ_COVER && resultCode == RESULT_OK && data?.data != null) {
+            TagEditorDialog.applyCoverFromUri(this, data.data!!)
+        }
     }
 
     private fun openQueueDialog() {
@@ -1192,20 +1293,6 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_TREE)
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_TREE && resultCode == RESULT_OK && data?.data != null) {
-            val uri = data.data!!
-            try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            } catch (e: Exception) { }
-            trees.add(uri.toString())
-            prefs().edit().putStringSet("trees", trees).apply()
-            if (settingsScreen.visibility == View.VISIBLE) renderFolders()
-            startScan()
-        }
-    }
-
     private fun startScan() {
         if (scanRunning) return
         scanRunning = true
@@ -1281,6 +1368,8 @@ class MainActivity : Activity() {
         var sampleRate = 0
         var bitDepth = 0
         var streamBitrate = 0
+        val fileSize = runCatching { f.length() }.getOrDefault(0L)
+        val fileMod = runCatching { f.lastModified() }.getOrDefault(0L)
 
         if (ext == "mp3") {
             try {
@@ -1297,7 +1386,7 @@ class MainActivity : Activity() {
                         tags = r.comment?.let { TagParser.extractTags(it) } ?: emptyList()
                         r.cover?.let { bytes ->
                             if (bytes.isNotEmpty()) {
-                                val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                                val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + ".img")
                                 cf.writeBytes(bytes)
                                 coverPath = cf.absolutePath
                             }
@@ -1320,7 +1409,7 @@ class MainActivity : Activity() {
                     mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
                     val pic = mmr.embeddedPicture
                     if (pic != null && pic.isNotEmpty()) {
-                        val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                        val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + ".img")
                         cf.writeBytes(pic)
                         coverPath = cf.absolutePath
                     }
@@ -1337,7 +1426,7 @@ class MainActivity : Activity() {
                 ex.release()
             } catch (e: Exception) { }
             try {
-                val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "." + ext)
+                val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + "." + ext)
                 contentResolver.openInputStream(f.uri)?.use { ins ->
                     FileOutputStream(tmp).use { out ->
                         val buf = ByteArray(64 * 1024)
@@ -1375,20 +1464,13 @@ class MainActivity : Activity() {
                 val mf = ex.getTrackFormat(i)
                 val mime = mf.getString(MediaFormat.KEY_MIME) ?: continue
                 if (!mime.startsWith("audio/")) continue
-                if (mf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                    sampleRate = mf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                }
+                if (mf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = mf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                 if (mf.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
                     bitDepth = when (mf.getInteger(MediaFormat.KEY_PCM_ENCODING)) {
-                        2 -> 16
-                        5 -> 24
-                        6 -> 32
-                        else -> 0
+                        2 -> 16; 5 -> 24; 6 -> 32; else -> 0
                     }
                 }
-                if (mf.containsKey(MediaFormat.KEY_BIT_RATE)) {
-                    streamBitrate = mf.getInteger(MediaFormat.KEY_BIT_RATE) / 1000
-                }
+                if (mf.containsKey(MediaFormat.KEY_BIT_RATE)) streamBitrate = mf.getInteger(MediaFormat.KEY_BIT_RATE) / 1000
                 break
             }
             ex.release()
@@ -1396,15 +1478,16 @@ class MainActivity : Activity() {
 
         var bitrate = streamBitrate
         if (bitrate <= 0 && durationMs > 0) {
-            val len = runCatching { f.length() }.getOrDefault(0L)
-            if (len > 0) bitrate = (len * 8 / durationMs).toInt()
+            if (fileSize > 0) bitrate = (fileSize * 8 / durationMs).toInt()
         }
-        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel, sampleRate, bitDepth)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel, sampleRate, bitDepth, fileSize, fileMod)
     }
 
     private fun rebuildContent(resetLimit: Boolean = true) {
         headTitle.text = when {
             currentTab == "menu" -> "Медиатека"
+            currentTab == "recent" -> "Недавно играло"
+            currentTab == "top" -> "Топ треков"
             subType != null -> subValue ?: ""
             currentTab == "tracks" -> "Треки"
             currentTab == "albums" -> "Альбомы"
@@ -1412,6 +1495,7 @@ class MainActivity : Activity() {
             currentTab == "genres" -> "Жанры"
             else -> "Теги"
         }
+        sortBtn.visibility = if (currentTab in listOf("tracks", "albums", "artists", "genres", "recent", "top")) View.VISIBLE else View.GONE
         contentBox.removeAllViews()
         if (searchShown) {
             (searchInput.parent as? ViewGroup)?.removeView(searchInput)
@@ -1423,6 +1507,23 @@ class MainActivity : Activity() {
         rebuildRows(resetLimit)
     }
 
+    private fun applySort(list: List<Track>, section: String): List<Track> {
+        val sortKey = prefs().getInt("sort_$section", 0)
+        return when (section) {
+            "tracks", "recent", "top" -> when (sortKey) {
+                1 -> list.sortedBy { it.year }
+                2 -> list.sortedByDescending { it.durationMs }
+                3 -> list.sortedByDescending { it.bitrateKbps }
+                else -> list.sortedBy { it.title }
+            }
+            "albums", "artists", "genres" -> when (sortKey) {
+                1 -> list.sortedByDescending { it.durationMs }
+                else -> list.sortedBy { it.title }
+            }
+            else -> list
+        }
+    }
+
     private fun rebuildRows(resetLimit: Boolean = true) {
         if (resetLimit) visibleLimit = 100
         rowsBox.removeAllViews()
@@ -1430,8 +1531,30 @@ class MainActivity : Activity() {
         val q = searchQuery.trim()
         when (currentTab) {
             "menu" -> addMenuRows()
+            "recent" -> {
+                val stats = Stats.load(this)
+                shown = applySort(
+                    tracks.filter { stats.containsKey(it.uri) && matches(it) }
+                        .sortedByDescending { stats[it.uri]?.second ?: 0L }
+                        .take(50),
+                    "recent"
+                )
+                pageTotal = shown.size
+                addTrackRows(shown)
+            }
+            "top" -> {
+                val stats = Stats.load(this)
+                shown = applySort(
+                    tracks.filter { stats.containsKey(it.uri) && matches(it) }
+                        .sortedByDescending { stats[it.uri]?.first ?: 0 }
+                        .take(50),
+                    "top"
+                )
+                pageTotal = shown.size
+                addTrackRows(shown)
+            }
             "tracks" -> {
-                shown = tracks.filter { matches(it) }.sortedBy { it.title }
+                shown = applySort(tracks.filter { matches(it) }, "tracks")
                 pageTotal = shown.size
                 addTrackRows(shown)
             }
@@ -1484,12 +1607,17 @@ class MainActivity : Activity() {
         val totalMin = tracks.sumOf { it.durationMs } / 60000
         val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
         val tagCount = tracks.flatMap { it.tags }.distinct().size
+        val stats = Stats.load(this)
+        val recentCount = stats.size
+        val topCount = stats.values.count { it.first > 1 }
 
         val items = listOf(
             Triple("tracks", "Треки", tracks.size),
             Triple("albums", "Альбомы", tracks.map { it.album }.distinct().size),
             Triple("artists", "Исполнители", tracks.map { it.artist }.distinct().size),
             Triple("genres", "Жанры", tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size),
+            Triple("recent", "Недавно играло", recentCount),
+            Triple("top", "Топ треков", topCount),
             Triple("tags", "Теги", tagCount)
         )
         for ((key, lbl, count) in items) {
@@ -1595,6 +1723,7 @@ class MainActivity : Activity() {
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
         rowL.setOnClickListener { play(t) }
+        rowL.setOnLongClickListener { openEditor(t); true }
         rowsBox.addView(rowL)
     }
 
@@ -1750,167 +1879,21 @@ class MainActivity : Activity() {
     }
 
     private fun openEditor(t: Track) {
-        val box = LinearLayout(this)
-        box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(16), dp(8), dp(16), 0)
-        val info = TextView(this); info.setTextColor(GRAY); box.addView(info)
-
-        val flow = FlowLayout(this)
-        box.addView(flow)
-
-        val input = MultiAutoCompleteTextView(this)
-        input.hint = "#"
-        input.setTextColor(WHITE)
-        input.setHintTextColor(GRAY)
-        input.threshold = 1
-        input.dropDownHeight = dp(220)
-        input.setTokenizer(object : MultiAutoCompleteTextView.Tokenizer {
-            override fun findTokenStart(text: CharSequence, cursor: Int): Int {
-                var i = cursor
-                while (i > 0 && !text[i - 1].isWhitespace() && text[i - 1] != ',') i--
-                return i
-            }
-            override fun findTokenEnd(text: CharSequence, cursor: Int): Int {
-                var i = cursor
-                while (i < text.length && !text[i].isWhitespace() && text[i] != ',') i++
-                return i
-            }
-            override fun terminateToken(text: CharSequence): CharSequence = "$text "
-        })
-        box.addView(input)
-
-        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle("${t.artist} - ${t.title}")
-            .setView(box)
-            .setPositiveButton("Закрыть", null)
-            .create()
-        dialog.window?.setBackgroundDrawable(GradientDrawable().apply {
-            setColor(Color.parseColor("#16121C"))
-            cornerRadius = dp(16).toFloat()
-        })
-        dialog.window?.setLayout(resources.displayMetrics.widthPixels - dp(40), WindowManager.LayoutParams.WRAP_CONTENT)
-
-        fun refresh() {
-            val curT = tracks.find { it.uri == t.uri } ?: t
-            flow.removeAllViews()
-            if (curT.tags.isEmpty()) {
-                val none = TextView(this); none.text = "тегов нет"
-                none.setTextColor(GRAY)
-                flow.addView(none)
-            }
-            for (g in curT.tags) {
-                val chip = TextView(this)
-                chip.text = "#$g ✕"
-                chip.setPadding(dp(10), dp(8), dp(10), dp(8))
-                val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
-                chip.background = pillBg(BUBBLE_BG, 99)
-                chip.setTextColor(WHITE)
-                chip.setOnClickListener {
-                    info.text = "Убираю #$g…"
-                    writeTag(t, g, false) { ok, msg ->
-                        info.text = if (ok) "Готово: #$g убран." else msg
-                        refresh(); rebuildContent(); refreshNow()
-                    }
-                }
-                flow.addView(chip)
-            }
-            input.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, allTags()))
-        }
-
-        dialog.setOnShowListener {
-            dialog.findViewById<TextView>(android.R.id.title)?.setTextColor(WHITE)
-            val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            btn.isAllCaps = false
-            btn.textSize = 14f
-            btn.setTextColor(WHITE)
-            btn.background = pillBg(ACCENT, 99)
-            btn.setPadding(dp(28), dp(10), dp(28), dp(10))
-            val blp = btn.layoutParams as LinearLayout.LayoutParams
-            blp.width = LinearLayout.LayoutParams.WRAP_CONTENT
-            blp.gravity = Gravity.CENTER
-            blp.setMargins(dp(16), dp(12), dp(16), dp(8))
-            btn.layoutParams = blp
-            btn.setOnClickListener {
-                if (input.text.toString().isBlank()) {
-                    dialog.dismiss()
-                } else {
-                    val tags = input.text.toString().split(Regex("[\\s,]+"))
-                        .map { it.trim().removePrefix("#").lowercase() }.filter { it.isNotEmpty() }.distinct()
-                    if (tags.isEmpty()) return@setOnClickListener
-                    info.text = "Записываю: " + tags.joinToString(" ") { "#$it" }
-                    writeTags(t, tags, true) { ok, msg ->
-                        info.text = if (ok) "Готово: " + tags.joinToString(" ") { "#$it" } else msg
-                        if (ok) input.setText("")
-                        refresh(); rebuildContent(); refreshNow()
+        TagEditorDialog.show(this, t) { draft ->
+            TagEditorDialog.write(this, t, draft) { ok, msg ->
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                if (ok) {
+                    val df = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))
+                    if (df != null) {
+                        val newTrack = readTrack(df)
+                        tracks = tracks.map { if (it.uri == t.uri) newTrack else it }
+                        saveLibraryCache()
+                        rebuildContent()
+                        refreshNow()
                     }
                 }
             }
-            input.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
-                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { }
-                override fun afterTextChanged(s: Editable?) {
-                    btn.text = if (s.isNullOrBlank()) "Закрыть" else "Сохранить"
-                }
-            })
         }
-        dialog.show(); refresh()
-    }
-
-    private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
-        writeTags(t, listOf(tag), add, cb)
-
-    private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
-        Thread {
-            var ok = false; var msg = "ок"; var newTags: List<String>? = null
-            try {
-                val uri = Uri.parse(t.uri)
-                val ext = extOfUri(t.uri).ifEmpty { "mp3" }
-                val inF = File(cacheDir, "edit_in." + ext); val outF = File(cacheDir, "edit_out." + ext)
-                contentResolver.openInputStream(uri)!!.use { ins -> FileOutputStream(inF).use { ins.copyTo(it) } }
-
-                if (t.format == "MP3") {
-                    val mp3 = Mp3File(inF.absolutePath)
-                    if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
-                    val old = mp3.id3v2Tag.comment ?: ""
-                    val currentTags = TagParser.extractTags(old)
-                    val nonTagLines = old.split("\n").map { it.trimEnd() }
-                        .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
-                    val resulting = if (add) (currentTags + tags).distinct()
-                                    else currentTags.filter { !tags.contains(it) }
-                    val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
-                    mp3.id3v2Tag.comment = new
-                    mp3.save(outF.absolutePath)
-                    contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
-                    newTags = TagParser.extractTags(new)
-                } else {
-                    val af = AudioFileIO.read(inF)
-                    val tag = af.tagOrCreateAndSetDefault
-                    val old = tag.getFirst(FieldKey.COMMENT) ?: ""
-                    val currentTags = TagParser.extractTags(old)
-                    val nonTagLines = old.split("\n").map { it.trimEnd() }
-                        .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
-                    val resulting = if (add) (currentTags + tags).distinct()
-                                    else currentTags.filter { !tags.contains(it) }
-                    val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
-                    tag.setField(FieldKey.COMMENT, new)
-                    af.commit()
-                    contentResolver.openOutputStream(uri, "wt")!!.use { os -> inF.inputStream().use { it.copyTo(os) } }
-                    newTags = TagParser.extractTags(new)
-                }
-                inF.delete(); outF.delete(); ok = true
-                saveLibraryCache()
-            } catch (e: Exception) {
-                msg = "Не записалось: ${e.javaClass.simpleName}: ${e.message}\nЕсли SecurityException — добавь папку заново в ⚙ Настройках (нужно право записи)."
-            }
-            runOnUiThread {
-                if (ok && newTags != null) {
-                    val nt = newTags!!
-                    tracks = tracks.map { if (it.uri == t.uri) it.copy(tags = nt) else it }
-                }
-                cb(ok, msg)
-            }
-        }.start()
     }
 
     private fun rebuildPlayerMeta() {
