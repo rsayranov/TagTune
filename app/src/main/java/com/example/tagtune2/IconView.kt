@@ -14,6 +14,12 @@ class IconView(context: Context) : View(context) {
             field = value
             invalidate()
         }
+    /* множитель размера глифа: позволяет уравнять разные пиктограммы */
+    var glyphScale: Float = 1f
+        set(value) {
+            field = value
+            invalidate()
+        }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun setColor(color: Int) { paint.color = color; invalidate() }
@@ -30,6 +36,7 @@ class IconView(context: Context) : View(context) {
             "gear", "sliders" -> 0.90f
             else -> 1f
         }
+        s *= glyphScale
         val c = width / 2f; val cy = height / 2f
         paint.strokeWidth = s * 0.09f
         paint.strokeCap = Paint.Cap.ROUND
