@@ -299,6 +299,7 @@ class MainActivity : Activity() {
     private lateinit var nbTitle: TextView
     private lateinit var nbArtist: TextView
     private lateinit var nbFormat: TextView
+    private lateinit var nbSpecs: TextView
     private lateinit var nbPlay: IconView
     private lateinit var nbNext: IconView
     private lateinit var npCover: ImageView
@@ -306,6 +307,7 @@ class MainActivity : Activity() {
     private lateinit var pArtist: TextView
     private lateinit var pAlbum: TextView
     private lateinit var pFormat: TextView
+    private lateinit var pSpecs: TextView
     private lateinit var tagsScroll: HorizontalScrollView
     private lateinit var tagsRow: LinearLayout
     private lateinit var waveView: WaveformView
@@ -373,7 +375,7 @@ class MainActivity : Activity() {
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
     private fun cacheFile() = File(filesDir, "library_cache.json")
     private fun crashFile() = File(filesDir, "crash_log.txt")
-    private fun formatColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
+    private fun bubbleColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
 
@@ -383,17 +385,14 @@ class MainActivity : Activity() {
         return if (d == d.toLong().toDouble()) "${d.toLong()}kHz" else "${d}kHz"
     }
 
-    private fun specString(t: Track): String {
+    /* характеристики без формата: 44.1kHz/320kbps или 24-bit/96kHz */
+    private fun specsString(t: Track): String {
         val khz = khzStr(t.sampleRateHz)
         return if (t.format == "FLAC") {
-            val bits = if (t.bitDepth > 0) "${t.bitDepth}-bit/" else ""
-            if (bits.isNotEmpty() || khz.isNotEmpty()) "${t.format} $bits$khz".trim() else t.format
+            val bits = if (t.bitDepth > 0) "${t.bitDepth}-bit" else null
+            listOfNotNull(bits, khz.takeIf { it.isNotEmpty() }).joinToString("/")
         } else {
-            val parts = listOfNotNull(
-                khz.takeIf { it.isNotEmpty() },
-                if (t.bitrateKbps > 0) "${t.bitrateKbps}kbps" else null
-            )
-            if (parts.isNotEmpty()) "${t.format} " + parts.joinToString("/") else t.format
+            listOfNotNull(khz.takeIf { it.isNotEmpty() }, if (t.bitrateKbps > 0) "${t.bitrateKbps}kbps" else null).joinToString("/")
         }
     }
 
@@ -749,10 +748,13 @@ class MainActivity : Activity() {
         nbFmtRow.setPadding(0, dp(3), 0, 0)
         nbFormat = TextView(this); nbFormat.textSize = 11f
         nbFormat.setTypeface(Typeface.DEFAULT_BOLD)
-        nbFormat.setTextColor(LOSSY_ORANGE)
-        nbFormat.background = pillBg(BUBBLE_BG, 99)
+        nbFormat.setTextColor(WHITE)
         nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
+        nbSpecs = TextView(this); nbSpecs.textSize = 11f
+        nbSpecs.setTextColor(WHITE)
+        nbSpecs.setPadding(dp(6), 0, 0, 0)
         nbFmtRow.addView(nbFormat)
+        nbFmtRow.addView(nbSpecs)
         nbInfo.addView(nbFmtRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         nbBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -862,10 +864,13 @@ class MainActivity : Activity() {
         fmtGroup.gravity = Gravity.CENTER
         pFormat = TextView(this); pFormat.textSize = 13f
         pFormat.setTypeface(Typeface.DEFAULT_BOLD)
-        pFormat.setTextColor(LOSSY_ORANGE)
-        pFormat.background = pillBg(BUBBLE_BG, 99)
+        pFormat.setTextColor(WHITE)
         pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
+        pSpecs = TextView(this); pSpecs.textSize = 13f
+        pSpecs.setTextColor(WHITE)
+        pSpecs.setPadding(dp(6), 0, 0, 0)
         fmtGroup.addView(pFormat)
+        fmtGroup.addView(pSpecs)
         tDur = TextView(this); tDur.text = "0:00"; tDur.textSize = 13f
         tDur.setTextColor(Color.parseColor("#9A93A8"))
         tDur.gravity = Gravity.END
@@ -1198,6 +1203,7 @@ class MainActivity : Activity() {
         var year = ""
         var sampleRate = 0
         var bitDepth = 0
+        var streamBitrate = 0
 
         if (ext == "mp3") {
             try {
@@ -1223,11 +1229,9 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) { }
         } else {
-            /* используем MediaExtractor для метаданных (работает на всех API) */
             try {
                 val ex = MediaExtractor()
                 ex.setDataSource(this, f.uri, null)
-                
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     val mmr = MediaMetadataRetriever()
                     mmr.setDataSource(this, f.uri)
@@ -1245,7 +1249,6 @@ class MainActivity : Activity() {
                     }
                     mmr.release()
                 } else {
-                    /* для старых API берём длительность из MediaExtractor */
                     for (i in 0 until ex.trackCount) {
                         val mf = ex.getTrackFormat(i)
                         if (mf.containsKey(MediaFormat.KEY_DURATION)) {
@@ -1256,7 +1259,6 @@ class MainActivity : Activity() {
                 }
                 ex.release()
             } catch (e: Exception) { }
-            
             try {
                 val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "." + ext)
                 contentResolver.openInputStream(f.uri)?.use { ins ->
@@ -1289,6 +1291,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) { }
         }
 
+        /* честные параметры потока: частота, разрядность, битрейт аудиодорожки */
         try {
             val ex = MediaExtractor()
             ex.setDataSource(this, f.uri, null)
@@ -1307,13 +1310,16 @@ class MainActivity : Activity() {
                         else -> 0
                     }
                 }
+                if (mf.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                    streamBitrate = mf.getInteger(MediaFormat.KEY_BIT_RATE) / 1000
+                }
                 break
             }
             ex.release()
         } catch (e: Exception) { }
 
-        var bitrate = 0
-        if (durationMs > 0) {
+        var bitrate = streamBitrate
+        if (bitrate <= 0 && durationMs > 0) {
             val len = runCatching { f.length() }.getOrDefault(0L)
             if (len > 0) bitrate = (len * 8 / durationMs).toInt()
         }
@@ -1486,16 +1492,21 @@ class MainActivity : Activity() {
         l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
         l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
         val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-        val fmtB = TextView(this); fmtB.text = specString(t); fmtB.textSize = 11f
+        val fmtB = TextView(this); fmtB.text = t.format; fmtB.textSize = 11f
         fmtB.setTypeface(Typeface.DEFAULT_BOLD)
-        fmtB.setTextColor(formatColor(t.format))
-        fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+        fmtB.setTextColor(WHITE)
+        fmtB.background = pillBg(bubbleColor(t.format), 99)
+        fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+        val specTv = TextView(this); specTv.text = specsString(t); specTv.textSize = 11f
+        specTv.setTextColor(WHITE)
+        specTv.setPadding(dp(6), 0, 0, 0)
         val tagsTv = TextView(this)
         tagsTv.text = highlight(t.tags.joinToString(" ") { "#$it" })
         tagsTv.textSize = 11f; tagsTv.setTextColor(ACCENT)
         tagsTv.setSingleLine(true); tagsTv.ellipsize = TextUtils.TruncateAt.END
         tagsTv.setPadding(dp(6), 0, 0, 0)
         l4.addView(fmtB)
+        if (specTv.text.isNotEmpty()) l4.addView(specTv)
         l4.addView(tagsTv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
         rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -1545,13 +1556,19 @@ class MainActivity : Activity() {
             val l3 = TextView(this); l3.text = if (yr.isNotEmpty()) yr else "Год не указан"
             l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
             val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-            val fmtB = TextView(this); fmtB.text = specString(first); fmtB.textSize = 11f
+            val fmtB = TextView(this); fmtB.text = first.format; fmtB.textSize = 11f
             fmtB.setTypeface(Typeface.DEFAULT_BOLD)
-            fmtB.setTextColor(formatColor(first.format))
-            fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+            fmtB.setTextColor(WHITE)
+            fmtB.background = pillBg(bubbleColor(first.format), 99)
+            fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+            val specTv = TextView(this); specTv.text = specsString(first); specTv.textSize = 11f
+            specTv.setTextColor(WHITE)
+            specTv.setPadding(dp(6), 0, 0, 0)
             val cnt = TextView(this); cnt.text = "${list.size} треков"; cnt.textSize = 11f
             cnt.setTextColor(Color.parseColor("#9A93A8")); cnt.setPadding(dp(6), 0, 0, 0)
-            l4.addView(fmtB); l4.addView(cnt)
+            l4.addView(fmtB)
+            if (specTv.text.isNotEmpty()) l4.addView(specTv)
+            l4.addView(cnt)
             col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
             rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -1825,8 +1842,12 @@ class MainActivity : Activity() {
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
-        pFormat.text = t?.let { specString(it) } ?: ""
-        pFormat.setTextColor(formatColor(t?.format ?: ""))
+        val fmtLabel = t?.format ?: ""
+        pFormat.text = fmtLabel
+        pFormat.background = pillBg(bubbleColor(fmtLabel), 99)
+        val specs = t?.let { specsString(it) } ?: ""
+        pSpecs.text = specs
+        pSpecs.visibility = if (specs.isEmpty()) View.GONE else View.VISIBLE
         tagsRow.removeAllViews()
         val tags = t?.tags ?: emptyList()
         for (g in tags) {
@@ -1880,8 +1901,12 @@ class MainActivity : Activity() {
             else -> PlayerState.title
         }
         nbArtist.text = PlayerState.artist
-        nbFormat.text = t?.let { specString(it) } ?: ""
-        nbFormat.setTextColor(formatColor(t?.format ?: ""))
+        val fmtLabel = t?.format ?: ""
+        nbFormat.text = fmtLabel
+        nbFormat.background = pillBg(bubbleColor(fmtLabel), 99)
+        val nspecs = t?.let { specsString(it) } ?: ""
+        nbSpecs.text = nspecs
+        nbSpecs.visibility = if (nspecs.isEmpty()) View.GONE else View.VISIBLE
         nbPlay.icon = if (playing) "pause" else "play"
         if (playing) nbBar.visibility = View.VISIBLE
         playI.icon = if (playing) "pause" else "play"
