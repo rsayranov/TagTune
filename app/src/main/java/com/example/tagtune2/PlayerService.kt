@@ -28,6 +28,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.media.app.NotificationCompat.MediaStyle
+import org.json.JSONObject
+import java.io.File
 
 data class QItem(val uri: String, val title: String, val artist: String) : java.io.Serializable
 
@@ -46,6 +48,39 @@ object PlayerState {
     var coverPath: String? = null
     val listeners = mutableListOf<() -> Unit>()
     fun emit() { listeners.toList().forEach { it() } }
+}
+
+object Stats {
+    fun record(ctx: Context, uri: String) {
+        Thread {
+            try {
+                val f = File(ctx.filesDir, "stats.json")
+                val jo = if (f.exists()) {
+                    val s = f.readText()
+                    if (s.isBlank()) JSONObject() else JSONObject(s)
+                } else JSONObject()
+                val entry = if (jo.has(uri)) jo.getJSONObject(uri) else JSONObject()
+                entry.put("count", (entry.optInt("count", 0) + 1))
+                entry.put("last", System.currentTimeMillis())
+                jo.put(uri, entry)
+                f.writeText(jo.toString())
+            } catch (_: Exception) { }
+        }.start()
+    }
+
+    fun load(ctx: Context): Map<String, Pair<Int, Long>> {
+        val f = File(ctx.filesDir, "stats.json")
+        if (!f.exists()) return emptyMap()
+        return try {
+            val jo = JSONObject(f.readText())
+            val out = mutableMapOf<String, Pair<Int, Long>>()
+            jo.keys().forEach { k ->
+                val e = jo.getJSONObject(k)
+                out[k] = Pair(e.optInt("count", 0), e.optLong("last", 0L))
+            }
+            out
+        } catch (_: Exception) { emptyMap() }
+    }
 }
 
 class PlayerService : Service() {
@@ -181,6 +216,7 @@ class PlayerService : Service() {
         }
         currentIndex = index
 
+        Stats.record(this, item.uri)
         gainFocus()
         player?.let { runCatching { it.release() } }
         player = null
@@ -254,8 +290,6 @@ class PlayerService : Service() {
         opts.inSampleSize = s
         BitmapFactory.decodeFile(path, opts)
     } catch (e: Exception) { null }
-
-    /* ---------- что играть дальше ---------- */
 
     private fun autoNext() {
         if (queue.isEmpty()) return
