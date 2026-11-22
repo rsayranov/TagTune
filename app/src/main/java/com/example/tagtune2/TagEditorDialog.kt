@@ -299,12 +299,10 @@ object TagEditorDialog {
                     tag.title = draft.title
                     tag.artist = draft.artist
                     tag.album = draft.album
-                    /* в mp3agic year — Int, приводим через toIntOrNull */
-                    if (draft.year.isNotEmpty()) {
-                        val y = draft.year.toIntOrNull()
-                        if (y != null && y > 0) tag.year = y
-                    }
-                    if (draft.genre.isNotEmpty()) tag.genre = draft.genre
+                    /* в ID3v2.4 (ID3v24Tag) year — это String (TDRC frame) */
+                    if (draft.year.isNotEmpty()) tag.year = draft.year
+                    /* setGenre(String) — вызываем явно, чтобы не ушло в int-перегрузку */
+                    if (draft.genre.isNotEmpty()) tag.setGenre(draft.genre)
                     val tagsLine = draft.tags.joinToString("\n") { "#$it" }
                     val old = tag.comment ?: ""
                     val nonTag = old.split("\n").map { it.trimEnd() }
@@ -318,8 +316,6 @@ object TagEditorDialog {
                             tag.setAlbumImage(baos.toByteArray(), "image/jpeg")
                         }
                     } ?: run {
-                        /* mp3agic 0.9.1 не имеет removeAlbumImage();
-                           очищаем через setAlbumImage с пустым массивом */
                         try {
                             tag.setAlbumImage(ByteArray(0), "image/jpeg")
                         } catch (_: Exception) {
