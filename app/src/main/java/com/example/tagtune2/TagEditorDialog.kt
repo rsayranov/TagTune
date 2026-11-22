@@ -299,9 +299,12 @@ object TagEditorDialog {
                     tag.title = draft.title
                     tag.artist = draft.artist
                     tag.album = draft.album
-                    /* в ID3v2.4 (ID3v24Tag) year — это String (TDRC frame) */
-                    if (draft.year.isNotEmpty()) tag.year = draft.year
-                    /* setGenre(String) — вызываем явно, чтобы не ушло в int-перегрузку */
+                    /* mp3agic 0.9.1: setYear(Int) — приводим String к Int */
+                    if (draft.year.isNotEmpty()) {
+                        val y = draft.year.toIntOrNull()
+                        if (y != null && y > 0) tag.year = y
+                    }
+                    /* setGenre(String) — явно, чтобы не ушло в int-перегрузку */
                     if (draft.genre.isNotEmpty()) tag.setGenre(draft.genre)
                     val tagsLine = draft.tags.joinToString("\n") { "#$it" }
                     val old = tag.comment ?: ""
@@ -318,9 +321,7 @@ object TagEditorDialog {
                     } ?: run {
                         try {
                             tag.setAlbumImage(ByteArray(0), "image/jpeg")
-                        } catch (_: Exception) {
-                            /* если упало — просто не трогаем существующую обложку */
-                        }
+                        } catch (_: Exception) { }
                     }
                     mp3.save(outF.absolutePath)
                     ctx.contentResolver.openOutputStream(uri, "wt")!!.use { os ->
