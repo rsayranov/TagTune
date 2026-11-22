@@ -14,7 +14,6 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -300,7 +299,11 @@ object TagEditorDialog {
                     tag.title = draft.title
                     tag.artist = draft.artist
                     tag.album = draft.album
-                    if (draft.year.isNotEmpty()) tag.year = draft.year
+                    /* в mp3agic year — Int, приводим через toIntOrNull */
+                    if (draft.year.isNotEmpty()) {
+                        val y = draft.year.toIntOrNull()
+                        if (y != null && y > 0) tag.year = y
+                    }
                     if (draft.genre.isNotEmpty()) tag.genre = draft.genre
                     val tagsLine = draft.tags.joinToString("\n") { "#$it" }
                     val old = tag.comment ?: ""
@@ -315,7 +318,13 @@ object TagEditorDialog {
                             tag.setAlbumImage(baos.toByteArray(), "image/jpeg")
                         }
                     } ?: run {
-                        try { tag.removeAlbumImage() } catch (_: Exception) { }
+                        /* mp3agic 0.9.1 не имеет removeAlbumImage();
+                           очищаем через setAlbumImage с пустым массивом */
+                        try {
+                            tag.setAlbumImage(ByteArray(0), "image/jpeg")
+                        } catch (_: Exception) {
+                            /* если упало — просто не трогаем существующую обложку */
+                        }
                     }
                     mp3.save(outF.absolutePath)
                     ctx.contentResolver.openOutputStream(uri, "wt")!!.use { os ->
