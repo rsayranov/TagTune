@@ -22,27 +22,38 @@ jobs:
         with:
           gradle-version: 8.7
 
-      # Подпись живёт В РЕПОЗИТОРИИ: первый запуск создаёт keystore и коммитит его,
-      # все последующие — берут тот же файл. Кэш больше не участвует.
+      # Запасной источник ключа (если в репозитории файла ещё нет)
+      - name: Keep debug keystore (одна подпись для всех сборок)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tagtune-debug-keystore-v2
+
+      # Порядок: репозиторий -> кэш -> генерация. Любой результат навсегда
+      # прописывается в репозиторий, поэтому подпись стабильна всегда.
       - name: Restore or create signing keystore
         run: |
           mkdir -p ~/.android ci
           if [ -f ci/keystore.b64 ]; then
             base64 -d ci/keystore.b64 > ~/.android/debug.keystore
-            echo "Keystore restored from repo"
+            echo "KEY SOURCE: repo file ci/keystore.b64"
           else
-            keytool -genkeypair -v \
-              -keystore ~/.android/debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+            if [ -f ~/.android/debug.keystore ]; then
+              echo "KEY SOURCE: actions cache"
+            else
+              keytool -genkeypair -v \
+                -keystore ~/.android/debug.keystore \
+                -storepass android -alias androiddebugkey -keypass android \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+              echo "KEY SOURCE: generated now"
+            fi
             base64 -w0 ~/.android/debug.keystore > ci/keystore.b64
             git config user.email "actions@github.com"
             git config user.name "GitHub Actions"
             git add ci/keystore.b64
             git commit -m "ci: store debug keystore [skip ci]"
-            git push || true
-            echo "Keystore generated and committed"
+            git push || echo "WARN: push failed, key stays in cache for this run"
           fi
 
       - name: Build APK
