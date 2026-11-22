@@ -51,7 +51,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
@@ -71,7 +70,6 @@ import java.util.Date
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
-/* ---------- круглый отклик при нажатии ---------- */
 class PressCircleDrawable(private val color: Int) : Drawable() {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     init { p.color = color }
@@ -84,7 +82,6 @@ class PressCircleDrawable(private val color: Int) : Drawable() {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/* ---------- потоковая раскладка ---------- */
 class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     var maxRows = 0
     var overflowCount = 0
@@ -155,7 +152,6 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
 }
 
-/* ---------- читает ID3-шапку mp3 ---------- */
 object Id3Reader {
     data class Result(
         val comment: String?, val cover: ByteArray?,
@@ -381,19 +377,17 @@ class MainActivity : Activity() {
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
 
-    /* 44100 -> 44.1kHz, 48000 -> 48kHz */
     private fun khzStr(hz: Int): String {
         if (hz <= 0) return ""
         val d = hz / 1000.0
         return if (d == d.toLong().toDouble()) "${d.toLong()}kHz" else "${d}kHz"
     }
 
-    /* lossy: MP3 44.1kHz/320kbps; flac: FLAC 24-bit/96kHz */
     private fun specString(t: Track): String {
         val khz = khzStr(t.sampleRateHz)
         return if (t.format == "FLAC") {
             val bits = if (t.bitDepth > 0) "${t.bitDepth}-bit/" else ""
-            if (bits.isNotEmpty() || khz.isNotEmpty()) "${t.format} $bits$khz" else t.format
+            if (bits.isNotEmpty() || khz.isNotEmpty()) "${t.format} $bits$khz".trim() else t.format
         } else {
             val parts = listOfNotNull(
                 khz.takeIf { it.isNotEmpty() },
@@ -491,8 +485,6 @@ class MainActivity : Activity() {
         return b
     }
 
-    /* ---------- бегущая строка ---------- */
-
     private fun attachAutoScroll(hsv: HorizontalScrollView) {
         scrollDirs[hsv] = 1
         scrollTouch[hsv] = 0L
@@ -536,8 +528,6 @@ class MainActivity : Activity() {
         return Pair(hsv, tv)
     }
 
-    /* ---------- краш-лог ---------- */
-
     private fun installCrashHandler() {
         val default = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -578,8 +568,6 @@ class MainActivity : Activity() {
             .setNegativeButton("Закрыть", null)
             .show()
     }
-
-    /* ---------- кэш библиотеки ---------- */
 
     private fun saveLibraryCache() {
         try {
@@ -637,7 +625,6 @@ class MainActivity : Activity() {
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.parseColor("#0D0A12"))
 
-        /* ---------- ЭКРАН: МЕДИАТЕКА ---------- */
         libScreen = LinearLayout(this)
         libScreen.orientation = LinearLayout.VERTICAL
         libScreen.setPadding(dp(14), dp(14), dp(14), dp(10))
@@ -713,7 +700,6 @@ class MainActivity : Activity() {
             }
         }
 
-        /* ---------- МИНИПЛЕЕР ---------- */
         nbBar = LinearLayout(this)
         nbBar.orientation = LinearLayout.HORIZONTAL
         nbBar.gravity = Gravity.CENTER_VERTICAL
@@ -770,7 +756,6 @@ class MainActivity : Activity() {
         nbInfo.addView(nbFmtRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         nbBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
-        /* кнопки одного размера: площадки 40dp и глифы уравнены через glyphScale */
         nbPlay = IconView(this); nbPlay.icon = "play"; nbPlay.setColor(WHITE)
         nbPlay.glyphScale = 1f
         nbPlay.background = pressCircle()
@@ -790,7 +775,6 @@ class MainActivity : Activity() {
 
         root.addView(libScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: ПЛЕЕР ---------- */
         playerScreen = LinearLayout(this)
         playerScreen.orientation = LinearLayout.VERTICAL
         playerScreen.setPadding(dp(14), dp(10), dp(14), dp(14))
@@ -882,12 +866,12 @@ class MainActivity : Activity() {
         pFormat.background = pillBg(BUBBLE_BG, 99)
         pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
         fmtGroup.addView(pFormat)
-        times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        times.addView(fmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         tDur = TextView(this); tDur.text = "0:00"; tDur.textSize = 13f
         tDur.setTextColor(Color.parseColor("#9A93A8"))
         tDur.gravity = Gravity.END
+        times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        times.addView(fmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         playerScreen.addView(times, timesLp)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
@@ -945,7 +929,6 @@ class MainActivity : Activity() {
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: НАСТРОЙКИ (без иконки в шапке) ---------- */
         settingsScreen = LinearLayout(this)
         settingsScreen.orientation = LinearLayout.VERTICAL
         settingsScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
@@ -984,8 +967,6 @@ class MainActivity : Activity() {
             pickFolder()
         } else startScan()
     }
-
-    /* ---------- навигация ---------- */
 
     private fun showPlayer() {
         libScreen.visibility = View.GONE
@@ -1143,8 +1124,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- сканирование с прогрессом ---------- */
-
     private fun startScan() {
         if (scanRunning) return
         scanRunning = true
@@ -1200,8 +1179,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- чтение трека ---------- */
-
     private fun readTrack(f: DocumentFile): Track {
         val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
         val formatLabel = when (ext) {
@@ -1246,23 +1223,40 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) { }
         } else {
+            /* используем MediaExtractor для метаданных (работает на всех API) */
             try {
-                val mmr = MediaMetadataRetriever()
-                mmr.setDataSource(this, f.uri)
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { if (it.isNotBlank()) title = it }
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { if (it.isNotBlank()) artist = it }
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { if (it.isNotBlank()) album = it }
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { if (it.isNotBlank()) genre = it }
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)?.let { year = it.take(4) }
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
-                val pic = mmr.embeddedPicture
-                if (pic != null && pic.isNotEmpty()) {
-                    val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
-                    cf.writeBytes(pic)
-                    coverPath = cf.absolutePath
+                val ex = MediaExtractor()
+                ex.setDataSource(this, f.uri, null)
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val mmr = MediaMetadataRetriever()
+                    mmr.setDataSource(this, f.uri)
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { if (it.isNotBlank()) title = it }
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { if (it.isNotBlank()) artist = it }
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { if (it.isNotBlank()) album = it }
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { if (it.isNotBlank()) genre = it }
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)?.let { year = it.take(4) }
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                    val pic = mmr.embeddedPicture
+                    if (pic != null && pic.isNotEmpty()) {
+                        val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                        cf.writeBytes(pic)
+                        coverPath = cf.absolutePath
+                    }
+                    mmr.release()
+                } else {
+                    /* для старых API берём длительность из MediaExtractor */
+                    for (i in 0 until ex.trackCount) {
+                        val mf = ex.getTrackFormat(i)
+                        if (mf.containsKey(MediaFormat.KEY_DURATION)) {
+                            durationMs = mf.getLong(MediaFormat.KEY_DURATION) / 1000
+                            break
+                        }
+                    }
                 }
-                mmr.release()
+                ex.release()
             } catch (e: Exception) { }
+            
             try {
                 val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "." + ext)
                 contentResolver.openInputStream(f.uri)?.use { ins ->
@@ -1286,17 +1280,18 @@ class MainActivity : Activity() {
 
         if (durationMs == 0L) {
             try {
-                val mmr = MediaMetadataRetriever()
-                mmr.setDataSource(this, f.uri)
-                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
-                mmr.release()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val mmr = MediaMetadataRetriever()
+                    mmr.setDataSource(this, f.uri)
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                    mmr.release()
+                }
             } catch (e: Exception) { }
         }
 
-        /* частота дискретизации и разрядность — через MediaExtractor (все форматы) */
         try {
             val ex = MediaExtractor()
-            ex.setDataSource(this, f.uri)
+            ex.setDataSource(this, f.uri, null)
             for (i in 0 until ex.trackCount) {
                 val mf = ex.getTrackFormat(i)
                 val mime = mf.getString(MediaFormat.KEY_MIME) ?: continue
@@ -1324,8 +1319,6 @@ class MainActivity : Activity() {
         }
         return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel, sampleRate, bitDepth)
     }
-
-    /* ---------- контент медиатеки ---------- */
 
     private fun rebuildContent(resetLimit: Boolean = true) {
         headTitle.text = when {
@@ -1663,8 +1656,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- РЕДАКТОР ТЕГОВ ---------- */
-
     private fun openEditor(t: Track) {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
@@ -1828,8 +1819,6 @@ class MainActivity : Activity() {
             }
         }.start()
     }
-
-    /* ---------- плеер: мета и обновление ---------- */
 
     private fun rebuildPlayerMeta() {
         val t = curTrack()
