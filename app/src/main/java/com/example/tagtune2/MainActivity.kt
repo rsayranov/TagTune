@@ -52,6 +52,8 @@ import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
 import com.example.tagtune2.utils.TagParser
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -144,7 +146,7 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
 }
 
-/* ---------- ID3-шапка ---------- */
+/* ---------- читает ID3-шапку mp3: теги, обложка, метаданные, текст ---------- */
 object Id3Reader {
     data class Result(
         val comment: String?, val cover: ByteArray?,
@@ -268,7 +270,11 @@ class MainActivity : Activity() {
     private val WHITE = Color.parseColor("#EEEEF5")
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val HL = Color.argb(51, 255, 77, 109)
-    /* пороги жестов: крутятся одной цифрой */
+    private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
+    private val LOSSY_ORANGE = Color.parseColor("#FF9800")
+    private val CACHE_VER = 2
+    private val HEAD_BYTES = 1024 * 1024
+    private val AUDIO_EXTS = setOf("mp3", "flac", "ogg", "oga", "opus")
     private val SEARCH_PULL_DP = 44
     private val DISMISS_FLING_DP = 34
     private val PLAYER_FLING_DP = 40
@@ -315,7 +321,7 @@ class MainActivity : Activity() {
         val tags: List<String>, val coverPath: String? = null,
         val album: String = "Неизвестный альбом", val genre: String = "",
         val durationMs: Long = 0, val bitrateKbps: Int = 0, val lyrics: String? = null,
-        val year: String = ""
+        val year: String = "", val format: String = "MP3"
     )
 
     private var tracks = listOf<Track>()
@@ -361,6 +367,9 @@ class MainActivity : Activity() {
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
     private fun cacheFile() = File(filesDir, "library_cache.json")
+    private fun formatColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
+    private fun extOfUri(uri: String): String =
+        (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
     private fun matches(t: Track): Boolean {
         val q = searchQuery.trim()
         if (q.isEmpty()) return true
@@ -470,7 +479,7 @@ class MainActivity : Activity() {
         return Pair(hsv, tv)
     }
 
-    /* ---------- кэш библиотеки ---------- */
+    /* ---------- кэш библиотеки (версия схемы: при смене — авто-перескан) ---------- */
 
     private fun saveLibraryCache() {
         try {
@@ -479,17 +488,19 @@ class MainActivity : Activity() {
                 val o = JSONObject()
                 o.put("uri", t.uri); o.put("title", t.title); o.put("artist", t.artist)
                 o.put("album", t.album); o.put("genre", t.genre); o.put("dur", t.durationMs)
-                o.put("br", t.bitrateKbps); o.put("yr", t.year)
+                o.put("br", t.bitrateKbps); o.put("yr", t.year); o.put("fmt", t.format)
                 if (t.lyrics != null) o.put("lyr", t.lyrics) else o.put("lyr", JSONObject.NULL)
                 o.put("tags", JSONArray(t.tags))
                 if (t.coverPath != null) o.put("cover", t.coverPath) else o.put("cover", JSONObject.NULL)
                 arr.put(o)
             }
             cacheFile().writeText(arr.toString())
+            prefs().edit().putInt("cache_ver", CACHE_VER).apply()
         } catch (e: Exception) { }
     }
 
     private fun loadLibraryCache(): List<Track> = try {
+        if (prefs().getInt("cache_ver", 0) != CACHE_VER) return emptyList()
         val arr = JSONArray(cacheFile().readText())
         val out = mutableListOf<Track>()
         for (i in 0 until arr.length()) {
@@ -502,7 +513,8 @@ class MainActivity : Activity() {
             out.add(Track(
                 o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
                 o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
-                o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", "")
+                o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", ""),
+                o.optString("fmt", "MP3")
             ))
         }
         out
@@ -596,7 +608,7 @@ class MainActivity : Activity() {
             }
         }
 
-        /* ---------- МИНИПЛЕЕР: стадион, три строки, play+next в ряд ---------- */
+        /* ---------- МИНИПЛЕЕР ---------- */
         nbBar = LinearLayout(this)
         nbBar.orientation = LinearLayout.HORIZONTAL
         nbBar.gravity = Gravity.CENTER_VERTICAL
@@ -644,7 +656,7 @@ class MainActivity : Activity() {
         val nbFmtRow = LinearLayout(this); nbFmtRow.orientation = LinearLayout.HORIZONTAL
         nbFmtRow.gravity = Gravity.CENTER_VERTICAL
         nbFmtRow.setPadding(0, dp(3), 0, 0)
-        nbFormat = TextView(this); nbFormat.textSize = 11f; nbFormat.setTextColor(WHITE)
+        nbFormat = TextView(this); nbFormat.textSize = 11f; nbFormat.setTextColor(LOSSY_ORANGE)
         nbFormat.background = pillBg(BUBBLE_BG, 99)
         nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
         nbBitrate = TextView(this); nbBitrate.textSize = 11f
@@ -755,7 +767,7 @@ class MainActivity : Activity() {
         val fmtGroup = LinearLayout(this); fmtGroup.orientation = LinearLayout.HORIZONTAL
         fmtGroup.gravity = Gravity.CENTER
         pFormat = TextView(this); pFormat.textSize = 13f
-        pFormat.setTextColor(WHITE)
+        pFormat.setTextColor(LOSSY_ORANGE)
         pFormat.background = pillBg(BUBBLE_BG, 99)
         pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
         pBitrate = TextView(this); pBitrate.textSize = 13f
@@ -1065,12 +1077,24 @@ class MainActivity : Activity() {
         if (dir == null || depth > 8 || out.size > 5000) return
         for (f in dir.listFiles()) {
             if (f.isDirectory) walk(f, out, depth + 1)
-            else if (f.name?.endsWith(".mp3", true) == true) out.add(f)
+            else {
+                val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
+                if (AUDIO_EXTS.contains(ext)) out.add(f)
+            }
         }
     }
 
+    /* ---------- чтение трека: mp3 через Id3Reader, остальные через retriever + jaudiotagger ---------- */
+
     private fun readTrack(f: DocumentFile): Track {
-        var title = f.name?.removeSuffix(".mp3") ?: "Без названия"
+        val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
+        val formatLabel = when (ext) {
+            "flac" -> "FLAC"
+            "ogg", "oga" -> "OGG"
+            "opus" -> "OPUS"
+            else -> "MP3"
+        }
+        var title = f.name?.removeSuffix(".${f.name?.substringAfterLast('.')}") ?: f.name ?: "Без названия"
         var artist = "Неизвестный исполнитель"
         var album = "Неизвестный альбом"
         var genre = ""
@@ -1079,28 +1103,70 @@ class MainActivity : Activity() {
         var coverPath: String? = null
         var lyrics: String? = null
         var year = ""
-        try {
-            contentResolver.openInputStream(f.uri)?.use { ins ->
-                val r = Id3Reader.read(ins)
-                if (r != null) {
-                    r.title?.let { if (it.isNotBlank()) title = it }
-                    r.artist?.let { if (it.isNotBlank()) artist = it }
-                    r.album?.let { if (it.isNotBlank()) album = it }
-                    r.genre?.let { if (it.isNotBlank()) genre = it }
-                    durationMs = r.durationMs
-                    lyrics = r.lyrics
-                    year = r.year ?: ""
-                    tags = r.comment?.let { TagParser.extractTags(it) } ?: emptyList()
-                    r.cover?.let { bytes ->
-                        if (bytes.isNotEmpty()) {
-                            val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
-                            cf.writeBytes(bytes)
-                            coverPath = cf.absolutePath
+
+        if (ext == "mp3") {
+            try {
+                contentResolver.openInputStream(f.uri)?.use { ins ->
+                    val r = Id3Reader.read(ins)
+                    if (r != null) {
+                        r.title?.let { if (it.isNotBlank()) title = it }
+                        r.artist?.let { if (it.isNotBlank()) artist = it }
+                        r.album?.let { if (it.isNotBlank()) album = it }
+                        r.genre?.let { if (it.isNotBlank()) genre = it }
+                        durationMs = r.durationMs
+                        lyrics = r.lyrics
+                        year = r.year ?: ""
+                        tags = r.comment?.let { TagParser.extractTags(it) } ?: emptyList()
+                        r.cover?.let { bytes ->
+                            if (bytes.isNotEmpty()) {
+                                val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                                cf.writeBytes(bytes)
+                                coverPath = cf.absolutePath
+                            }
                         }
                     }
                 }
-            }
-        } catch (e: Exception) { }
+            } catch (e: Exception) { }
+        } else {
+            try {
+                val mmr = MediaMetadataRetriever()
+                mmr.setDataSource(this, f.uri)
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { if (it.isNotBlank()) title = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { if (it.isNotBlank()) artist = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { if (it.isNotBlank()) album = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { if (it.isNotBlank()) genre = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)?.let { year = it.take(4) }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                val pic = mmr.embeddedPicture
+                if (pic != null && pic.isNotEmpty()) {
+                    val cf = File(cacheDir, "cov_" + Integer.toHexString(f.uri.toString().hashCode()) + ".img")
+                    cf.writeBytes(pic)
+                    coverPath = cf.absolutePath
+                }
+                mmr.release()
+            } catch (e: Exception) { }
+            /* хештеги из Vorbis-комментария: читаем только шапку файла (1 МБ), без полного копирования */
+            try {
+                val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "." + ext)
+                contentResolver.openInputStream(f.uri)?.use { ins ->
+                    FileOutputStream(tmp).use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var left = HEAD_BYTES
+                        while (left > 0) {
+                            val r = ins.read(buf, 0, minOf(buf.size, left))
+                            if (r <= 0) break
+                            out.write(buf, 0, r)
+                            left -= r
+                        }
+                    }
+                }
+                val af = AudioFileIO.read(tmp)
+                val cmt = af.tag?.getFirst(FieldKey.COMMENT) ?: ""
+                tags = TagParser.extractTags(cmt)
+                tmp.delete()
+            } catch (e: Exception) { }
+        }
+
         if (durationMs == 0L) {
             try {
                 val mmr = MediaMetadataRetriever()
@@ -1114,7 +1180,7 @@ class MainActivity : Activity() {
             val len = runCatching { f.length() }.getOrDefault(0L)
             if (len > 0) bitrate = (len * 8 / durationMs).toInt()
         }
-        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel)
     }
 
     /* ---------- контент медиатеки ---------- */
@@ -1275,7 +1341,8 @@ class MainActivity : Activity() {
         l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
         l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
         val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-        val fmtB = TextView(this); fmtB.text = "MP3"; fmtB.textSize = 11f; fmtB.setTextColor(WHITE)
+        val fmtB = TextView(this); fmtB.text = t.format; fmtB.textSize = 11f
+        fmtB.setTextColor(formatColor(t.format))
         fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
         val br = TextView(this); br.text = if (t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
         br.textSize = 11f; br.setTextColor(Color.parseColor("#9A93A8")); br.setPadding(dp(5), 0, 0, 0)
@@ -1334,7 +1401,8 @@ class MainActivity : Activity() {
             val l3 = TextView(this); l3.text = if (yr.isNotEmpty()) yr else "Год не указан"
             l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
             val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-            val fmtB = TextView(this); fmtB.text = "MP3"; fmtB.textSize = 11f; fmtB.setTextColor(WHITE)
+            val fmtB = TextView(this); fmtB.text = first.format; fmtB.textSize = 11f
+            fmtB.setTextColor(formatColor(first.format))
             fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
             val cnt = TextView(this); cnt.text = "${list.size} треков"; cnt.textSize = 11f
             cnt.setTextColor(Color.parseColor("#9A93A8")); cnt.setPadding(dp(6), 0, 0, 0)
@@ -1556,26 +1624,46 @@ class MainActivity : Activity() {
     private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
         writeTags(t, listOf(tag), add, cb)
 
+    /* ---------- запись тегов: mp3 → mp3agic (ID3 COMM), остальные → jaudiotagger (Vorbis COMMENT) ---------- */
+
     private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
             var ok = false; var msg = "ок"; var newTags: List<String>? = null
             try {
                 val uri = Uri.parse(t.uri)
-                val inF = File(cacheDir, "edit_in.mp3"); val outF = File(cacheDir, "edit_out.mp3")
+                val ext = extOfUri(t.uri).ifEmpty { "mp3" }
+                val inF = File(cacheDir, "edit_in." + ext); val outF = File(cacheDir, "edit_out." + ext)
                 contentResolver.openInputStream(uri)!!.use { ins -> FileOutputStream(inF).use { ins.copyTo(it) } }
-                val mp3 = Mp3File(inF.absolutePath)
-                if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
-                val old = mp3.id3v2Tag.comment ?: ""
-                val currentTags = TagParser.extractTags(old)
-                val nonTagLines = old.split("\n").map { it.trimEnd() }
-                    .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
-                val resulting = if (add) (currentTags + tags).distinct()
-                                else currentTags.filter { !tags.contains(it) }
-                val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
-                mp3.id3v2Tag.comment = new
-                mp3.save(outF.absolutePath)
-                contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
-                newTags = TagParser.extractTags(new)
+
+                if (t.format == "MP3") {
+                    val mp3 = Mp3File(inF.absolutePath)
+                    if (!mp3.hasId3v2Tag()) mp3.id3v2Tag = ID3v24Tag()
+                    val old = mp3.id3v2Tag.comment ?: ""
+                    val currentTags = TagParser.extractTags(old)
+                    val nonTagLines = old.split("\n").map { it.trimEnd() }
+                        .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
+                    val resulting = if (add) (currentTags + tags).distinct()
+                                    else currentTags.filter { !tags.contains(it) }
+                    val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
+                    mp3.id3v2Tag.comment = new
+                    mp3.save(outF.absolutePath)
+                    contentResolver.openOutputStream(uri, "wt")!!.use { os -> outF.inputStream().use { it.copyTo(os) } }
+                    newTags = TagParser.extractTags(new)
+                } else {
+                    val af = AudioFileIO.read(inF)
+                    val tag = af.tagOrCreateAndSetDefault
+                    val old = tag.getFirst(FieldKey.COMMENT) ?: ""
+                    val currentTags = TagParser.extractTags(old)
+                    val nonTagLines = old.split("\n").map { it.trimEnd() }
+                        .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
+                    val resulting = if (add) (currentTags + tags).distinct()
+                                    else currentTags.filter { !tags.contains(it) }
+                    val new = (nonTagLines + resulting.map { "#$it" }).joinToString("\n")
+                    tag.setField(FieldKey.COMMENT, new)
+                    af.commit()
+                    contentResolver.openOutputStream(uri, "wt")!!.use { os -> inF.inputStream().use { it.copyTo(os) } }
+                    newTags = TagParser.extractTags(new)
+                }
                 inF.delete(); outF.delete(); ok = true
                 saveLibraryCache()
             } catch (e: Exception) {
@@ -1598,7 +1686,8 @@ class MainActivity : Activity() {
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
-        pFormat.text = if (t != null) "MP3" else ""
+        pFormat.text = t?.format ?: ""
+        pFormat.setTextColor(formatColor(pFormat.text.toString()))
         pBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
         pBitrate.visibility = if (pBitrate.text.isEmpty()) View.GONE else View.VISIBLE
         tagsRow.removeAllViews()
@@ -1654,7 +1743,8 @@ class MainActivity : Activity() {
             else -> PlayerState.title
         }
         nbArtist.text = PlayerState.artist
-        nbFormat.text = if (t != null) "MP3" else ""
+        nbFormat.text = t?.format ?: ""
+        nbFormat.setTextColor(formatColor(nbFormat.text.toString()))
         nbBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
         nbBitrate.visibility = if (nbBitrate.text.isEmpty()) View.GONE else View.VISIBLE
         nbPlay.icon = if (playing) "pause" else "play"
