@@ -7,7 +7,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
 
-/* ---------- пиктограммы в оптике YouTube Music: тонкие режимы, залитые стрелки ---------- */
+/* ---------- пиктограммы: единый штрих, без эмодзи ---------- */
 class IconView(context: Context) : View(context) {
     var icon: String = "play"
         set(value) {
@@ -27,7 +27,7 @@ class IconView(context: Context) : View(context) {
             "prev", "next" -> 0.80f
             "play", "pause" -> 0.62f
             "queue", "lyrics", "tags" -> 0.66f
-            "gear" -> 0.90f
+            "gear", "sliders" -> 0.90f
             else -> 1f
         }
         val c = width / 2f; val cy = height / 2f
@@ -162,16 +162,15 @@ class IconView(context: Context) : View(context) {
                 canvas.drawPath(p, paint)
                 canvas.restore()
             }
-            "gear" -> {
+            "sliders" -> {
                 paint.style = Paint.Style.STROKE
-                canvas.drawCircle(c, cy, s * 0.17f, paint)
-                for (k in 0..7) {
-                    val a = Math.toRadians(k * 45.0)
-                    val ca = Math.cos(a).toFloat(); val sa = Math.sin(a).toFloat()
-                    canvas.drawLine(c + ca * s * 0.24f, cy + sa * s * 0.24f, c + ca * s * 0.32f, cy + sa * s * 0.32f, paint)
+                for (k in -1..1) {
+                    canvas.drawLine(c + k * s * 0.20f, cy - s * 0.28f, c + k * s * 0.20f, cy + s * 0.28f, paint)
                 }
                 paint.style = Paint.Style.FILL
-                canvas.drawCircle(c, cy, s * 0.06f, paint)
+                canvas.drawCircle(c - s * 0.20f, cy - s * 0.10f, s * 0.07f, paint)
+                canvas.drawCircle(c, cy + s * 0.12f, s * 0.07f, paint)
+                canvas.drawCircle(c + s * 0.20f, cy - s * 0.02f, s * 0.07f, paint)
             }
         }
     }
