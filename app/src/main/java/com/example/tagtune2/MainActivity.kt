@@ -26,6 +26,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.text.Editable
 import android.text.SpannableString
@@ -36,6 +37,7 @@ import android.text.style.BackgroundColorSpan
 import android.util.LruCache
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -270,12 +272,16 @@ object Id3Reader {
 class MainActivity : Activity() {
 
     private val REQ_TREE = 202
-    private val ACCENT = Color.parseColor("#FF4D6D")
+    private val ACCENTS = intArrayOf(
+        Color.parseColor("#FF4D6D"), Color.parseColor("#7C4DFF"), Color.parseColor("#3DDC84"),
+        Color.parseColor("#FF9800"), Color.parseColor("#40C4FF"), Color.parseColor("#C2185B")
+    )
+    private val ACCENT_NAMES = arrayOf("Розовый", "Фиолетовый", "Зелёный", "Оранжевый", "Голубой", "Малиновый")
+    private var ACCENT = Color.parseColor("#FF4D6D")
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
     private val CARD_BG = Color.parseColor("#1E1E2A")
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
-    private val HL = Color.argb(51, 255, 77, 109)
     private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
     private val LOSSY_ORANGE = Color.parseColor("#FF9800")
     private val CACHE_VER = 3
@@ -303,6 +309,8 @@ class MainActivity : Activity() {
     private lateinit var nbPlay: IconView
     private lateinit var nbNext: IconView
     private lateinit var npCover: ImageView
+    private lateinit var npCover2: ImageView
+    private var frontIsA = true
     private lateinit var pTitle: TextView
     private lateinit var pArtist: TextView
     private lateinit var pAlbum: TextView
@@ -364,7 +372,8 @@ class MainActivity : Activity() {
                 if (dur > 0) waveView.setProgress(pos.toFloat() / dur)
                 if (PlayerState.playing) nbCover.rotation = (nbCover.rotation + 0.5f) % 360f
             }
-            handler.postDelayed(this, 100)
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            handler.postDelayed(this, if (pm.isInteractive) 100 else 1000)
         }
     }
 
@@ -375,6 +384,7 @@ class MainActivity : Activity() {
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
     private fun cacheFile() = File(filesDir, "library_cache.json")
     private fun crashFile() = File(filesDir, "crash_log.txt")
+    private fun accentAlpha(a: Int): Int = (ACCENT and 0x00FFFFFF) or (a shl 24)
     private fun bubbleColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
@@ -385,7 +395,6 @@ class MainActivity : Activity() {
         return if (d == d.toLong().toDouble()) "${d.toLong()}kHz" else "${d}kHz"
     }
 
-    /* характеристики без формата: 44.1kHz/320kbps или 24-bit/96kHz */
     private fun specsString(t: Track): String {
         val khz = khzStr(t.sampleRateHz)
         return if (t.format == "FLAC") {
@@ -409,7 +418,7 @@ class MainActivity : Activity() {
         val sp = SpannableString(text)
         var idx = text.indexOf(q, 0, true)
         while (idx >= 0) {
-            sp.setSpan(BackgroundColorSpan(HL), idx, idx + q.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sp.setSpan(BackgroundColorSpan(accentAlpha(51)), idx, idx + q.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             idx = text.indexOf(q, idx + q.length, true)
         }
         return sp
@@ -467,6 +476,13 @@ class MainActivity : Activity() {
         sld.addState(intArrayOf(android.R.attr.state_pressed), PressCircleDrawable(ACCENT))
         sld.addState(intArrayOf(), PressCircleDrawable(Color.TRANSPARENT))
         return sld
+    }
+
+    private fun hclick(v: View, action: () -> Unit) {
+        v.setOnClickListener {
+            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            action()
+        }
     }
 
     private fun settingsRow(text: String, click: () -> Unit): Button {
@@ -568,6 +584,36 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun openAccentDialog() {
+        val current = prefs().getInt("accent_idx", 0)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        row.setPadding(dp(16), dp(16), dp(16), dp(16))
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Акцентный цвет")
+            .setView(row)
+            .setNegativeButton("Отмена", null)
+            .create()
+        for (i in ACCENTS.indices) {
+            val sw = View(this)
+            sw.background = GradientDrawable().apply {
+                setColor(ACCENTS[i])
+                shape = GradientDrawable.OVAL
+                if (i == current) setStroke(dp(3), WHITE)
+            }
+            sw.setOnClickListener {
+                prefs().edit().putInt("accent_idx", i).apply()
+                dialog.dismiss()
+                recreate()
+            }
+            val lp = LinearLayout.LayoutParams(dp(44), dp(44))
+            lp.setMargins(dp(6), 0, dp(6), 0)
+            row.addView(sw, lp)
+        }
+        dialog.show()
+    }
+
     private fun saveLibraryCache() {
         try {
             val arr = JSONArray()
@@ -613,6 +659,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installCrashHandler()
+        ACCENT = ACCENTS[prefs().getInt("accent_idx", 0).coerceIn(0, ACCENTS.size - 1)]
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
         }
@@ -761,12 +808,12 @@ class MainActivity : Activity() {
         nbPlay = IconView(this); nbPlay.icon = "play"; nbPlay.setColor(WHITE)
         nbPlay.glyphScale = 1f
         nbPlay.background = pressCircle()
-        nbPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        hclick(nbPlay) { PlayerService.cmd(this, "toggle") }
         nbBar.addView(nbPlay, LinearLayout.LayoutParams(dp(40), dp(40)))
         nbNext = IconView(this); nbNext.icon = "next"; nbNext.setColor(WHITE)
         nbNext.glyphScale = 0.775f
         nbNext.background = pressCircle()
-        nbNext.setOnClickListener { PlayerService.cmd(this, "next") }
+        hclick(nbNext) { PlayerService.cmd(this, "next") }
         val nbNextLp = LinearLayout.LayoutParams(dp(40), dp(40))
         nbNextLp.setMargins(dp(4), 0, 0, 0)
         nbBar.addView(nbNext, nbNextLp)
@@ -804,20 +851,30 @@ class MainActivity : Activity() {
         })
         gestureZone.setOnTouchListener { _, ev -> gd.onTouchEvent(ev) }
 
-        npCover = ImageView(this)
-        npCover.scaleType = ImageView.ScaleType.CENTER_CROP
-        npCover.setBackgroundColor(Color.parseColor("#1E1E2A"))
-        npCover.clipToOutline = true
-        npCover.outlineProvider = object : ViewOutlineProvider() {
+        val coverFrame = FrameLayout(this)
+        val roundProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, o: Outline) {
                 o.setRoundRect(0, 0, v.width, v.height, dp(16).toFloat())
             }
         }
+        npCover = ImageView(this)
+        npCover.scaleType = ImageView.ScaleType.CENTER_CROP
+        npCover.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        npCover.clipToOutline = true
+        npCover.outlineProvider = roundProvider
+        npCover2 = ImageView(this)
+        npCover2.scaleType = ImageView.ScaleType.CENTER_CROP
+        npCover2.setBackgroundColor(Color.parseColor("#1E1E2A"))
+        npCover2.clipToOutline = true
+        npCover2.outlineProvider = roundProvider
+        npCover2.alpha = 0f
+        npCover2.visibility = View.INVISIBLE
+        coverFrame.addView(npCover, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        coverFrame.addView(npCover2, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         val covSize = resources.displayMetrics.widthPixels - dp(28) - dp(40)
         val covLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, covSize)
         covLp.setMargins(dp(20), dp(6), dp(20), dp(6))
-        npCover.layoutParams = covLp
-        gestureZone.addView(npCover)
+        gestureZone.addView(coverFrame, covLp)
 
         val titlePair = marqueeText(22f, WHITE, Gravity.CENTER); pTitle = titlePair.second
         val titleLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -845,6 +902,7 @@ class MainActivity : Activity() {
         playerScreen.addView(gestureZone)
 
         waveView = WaveformView(this)
+        waveView.setAccent(ACCENT)
         waveView.onSeek = { f ->
             val d = PlayerState.durationMs
             if (d > 0) PlayerService.cmd(this, "seek", seekMs = (f * d).toInt())
@@ -884,25 +942,25 @@ class MainActivity : Activity() {
         transport.setPadding(0, dp(20), 0, 0)
         shufI = IconView(this); shufI.icon = "shuffle"; shufI.setColor(GRAY)
         shufI.background = pressCircle()
-        shufI.setOnClickListener { PlayerService.cmd(this, "toggleShuffle") }
+        hclick(shufI) { PlayerService.cmd(this, "toggleShuffle") }
         transport.addView(shufI, LinearLayout.LayoutParams(0, dp(36), 1f))
         prevI = IconView(this); prevI.icon = "prev"; prevI.setColor(WHITE)
         prevI.background = pressCircle()
-        prevI.setOnClickListener { PlayerService.cmd(this, "prev") }
+        hclick(prevI) { PlayerService.cmd(this, "prev") }
         transport.addView(prevI, LinearLayout.LayoutParams(0, dp(44), 1f))
         playI = IconView(this); playI.icon = "play"; playI.setColor(WHITE)
         playI.background = GradientDrawable().apply { setColor(ACCENT); shape = GradientDrawable.OVAL }
-        playI.setOnClickListener { PlayerService.cmd(this, "toggle") }
+        hclick(playI) { PlayerService.cmd(this, "toggle") }
         val playLp = LinearLayout.LayoutParams(dp(64), dp(64))
         playLp.setMargins(dp(8), 0, dp(8), 0)
         transport.addView(playI, playLp)
         nextI = IconView(this); nextI.icon = "next"; nextI.setColor(WHITE)
         nextI.background = pressCircle()
-        nextI.setOnClickListener { PlayerService.cmd(this, "next") }
+        hclick(nextI) { PlayerService.cmd(this, "next") }
         transport.addView(nextI, LinearLayout.LayoutParams(0, dp(44), 1f))
         repI = IconView(this); repI.icon = "repeat"; repI.setColor(GRAY)
         repI.background = pressCircle()
-        repI.setOnClickListener { PlayerService.cmd(this, "toggleRepeat") }
+        hclick(repI) { PlayerService.cmd(this, "toggleRepeat") }
         transport.addView(repI, LinearLayout.LayoutParams(0, dp(36), 1f))
         playerScreen.addView(transport)
 
@@ -913,17 +971,17 @@ class MainActivity : Activity() {
         extraRow.addView(sp1, LinearLayout.LayoutParams(0, dp(40), 1f))
         queueI = IconView(this); queueI.icon = "queue"; queueI.setColor(WHITE)
         queueI.background = pressCircle()
-        queueI.setOnClickListener { openQueueDialog() }
+        hclick(queueI) { openQueueDialog() }
         extraRow.addView(queueI, LinearLayout.LayoutParams(0, dp(40), 1f))
         lyricsI = IconView(this); lyricsI.icon = "lyrics"; lyricsI.setColor(WHITE)
         lyricsI.background = pressCircle()
-        lyricsI.setOnClickListener { openLyricsDialog() }
+        hclick(lyricsI) { openLyricsDialog() }
         val lyrLp = LinearLayout.LayoutParams(dp(64), dp(40))
         lyrLp.setMargins(dp(8), 0, dp(8), 0)
         extraRow.addView(lyricsI, lyrLp)
         tagsI = IconView(this); tagsI.icon = "tags"; tagsI.setColor(WHITE)
         tagsI.background = pressCircle()
-        tagsI.setOnClickListener { curTrack()?.let { openEditor(it) } }
+        hclick(tagsI) { curTrack()?.let { openEditor(it) } }
         extraRow.addView(tagsI, LinearLayout.LayoutParams(0, dp(40), 1f))
         val sp2 = View(this)
         extraRow.addView(sp2, LinearLayout.LayoutParams(0, dp(40), 1f))
@@ -957,6 +1015,7 @@ class MainActivity : Activity() {
         sBox.addView(foldersBox)
         sBox.addView(settingsRow("＋ Добавить папку") { pickFolder() })
         sBox.addView(settingsRow("🔄 Пересканировать") { startScan() })
+        sBox.addView(settingsRow("🎨 Акцент: " + ACCENT_NAMES[prefs().getInt("accent_idx", 0).coerceIn(0, ACCENT_NAMES.size - 1)]) { openAccentDialog() })
         sBox.addView(settingsRow("📋 Логи ошибок") { openCrashLogDialog() })
 
         root.addView(settingsScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
@@ -971,6 +1030,24 @@ class MainActivity : Activity() {
             status.text = "Первый запуск: выбери папку с музыкой"
             pickFolder()
         } else startScan()
+    }
+
+    private fun showCoverBig(bm: Bitmap?) {
+        if (bm == null) {
+            npCover.setImageResource(0); npCover2.setImageResource(0)
+            npCover.alpha = 1f; npCover2.alpha = 0f
+            npCover2.visibility = View.INVISIBLE
+            frontIsA = true
+            return
+        }
+        val back = if (frontIsA) npCover2 else npCover
+        val front = if (frontIsA) npCover else npCover2
+        back.setImageBitmap(bm)
+        back.visibility = View.VISIBLE
+        back.alpha = 0f
+        back.animate().alpha(1f).setDuration(250).start()
+        front.animate().alpha(0f).setDuration(250).withEndAction { front.visibility = View.INVISIBLE }.start()
+        frontIsA = !frontIsA
     }
 
     private fun showPlayer() {
@@ -1291,7 +1368,6 @@ class MainActivity : Activity() {
             } catch (e: Exception) { }
         }
 
-        /* честные параметры потока: частота, разрядность, битрейт аудиодорожки */
         try {
             val ex = MediaExtractor()
             ex.setDataSource(this, f.uri, null)
@@ -1839,6 +1915,7 @@ class MainActivity : Activity() {
 
     private fun rebuildPlayerMeta() {
         val t = curTrack()
+        PlayerState.coverPath = t?.coverPath
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
@@ -1886,7 +1963,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 bigCoverBm = bm
                 if (bigCoverUri == uri && playerScreen.visibility == View.VISIBLE) {
-                    if (bm != null) npCover.setImageBitmap(bm) else npCover.setImageResource(0)
+                    showCoverBig(bm)
                 }
             }
         }.start()
@@ -1915,8 +1992,9 @@ class MainActivity : Activity() {
         repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
         repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
         if (PlayerState.uri == null) {
+            PlayerState.coverPath = null
             nbCover.setImageResource(0); nbCover.rotation = 0f
-            npCover.setImageResource(0)
+            showCoverBig(null)
             bigCoverUri = null; lastPlayerUri = null
         }
         if (PlayerState.uri != lastPlayerUri) {
@@ -1940,6 +2018,7 @@ class MainActivity : Activity() {
 
     private fun play(t: Track) {
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
+        PlayerState.coverPath = t.coverPath
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
         nbBar.visibility = View.VISIBLE
         bigCoverUri = null; bigCoverBm = null
