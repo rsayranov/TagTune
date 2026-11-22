@@ -31,6 +31,6 @@ dependencies {
     implementation("com.mpatric:mp3agic:0.9.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.media:media:1.7.0")
-    implementation("net.jaudiotagger:jaudiotagger:2.2.6")
+    implementation("com.github.AdrienPoupa:jaudiotagger:2.2.3")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
