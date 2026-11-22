@@ -4,10 +4,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
@@ -38,6 +43,7 @@ object PlayerState {
     var queueItems: List<QItem> = emptyList()
     var shuffleOn = true
     var repeatMode = 0
+    var coverPath: String? = null
     val listeners = mutableListOf<() -> Unit>()
     fun emit() { listeners.toList().forEach { it() } }
 }
@@ -65,10 +71,31 @@ class PlayerService : Service() {
     private var lastPlayAtMs = 0L
     private lateinit var session: MediaSessionCompat
     private val mainHandler = Handler(Looper.getMainLooper())
+    private lateinit var audioManager: AudioManager
+    private var focusRequest: AudioFocusRequest? = null
+    private var iconPath: String? = null
+    private var iconBmp: Bitmap? = null
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { focus ->
+        when (focus) {
+            AudioManager.AUDIOFOCUS_LOSS -> pause()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pause()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.setVolume(0.3f, 0.3f)
+            AudioManager.AUDIOFOCUS_GAIN -> player?.setVolume(1f, 1f)
+        }
+    }
+
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pause()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         if (Build.VERSION.SDK_INT >= 26) {
             getSystemService(NotificationManager::class.java)
                 .createNotificationChannel(NotificationChannel(CH, "Воспроизведение", NotificationManager.IMPORTANCE_LOW))
@@ -115,6 +142,33 @@ class PlayerService : Service() {
 
     fun currentPosition(): Int = try { player?.currentPosition ?: 0 } catch (e: Exception) { 0 }
 
+    private fun gainFocus() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            val req = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener(focusListener, mainHandler)
+                .build().also { focusRequest = it }
+            audioManager.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+        }
+    }
+
+    private fun abandonFocus() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(focusListener)
+        }
+    }
+
     private fun playCurrent(pushHistory: Boolean = true) {
         val item = queue.getOrNull(index) ?: return
         val now = SystemClock.uptimeMillis()
@@ -127,6 +181,7 @@ class PlayerService : Service() {
         }
         currentIndex = index
 
+        gainFocus()
         player?.let { runCatching { it.release() } }
         player = null
         PlayerState.uri = item.uri
@@ -137,7 +192,7 @@ class PlayerService : Service() {
         PlayerState.queueItems = queue
         PlayerState.queueSize = queue.size
         PlayerState.queuePos = index + 1
-        updateState(); startFg(); PlayerState.emit()
+        updateState(); startFg(); refreshNotifIcon(); PlayerState.emit()
 
         Thread {
             try {
@@ -172,13 +227,39 @@ class PlayerService : Service() {
         }.start()
     }
 
+    private fun refreshNotifIcon() {
+        val p = PlayerState.coverPath
+        if (p == iconPath) return
+        iconPath = p
+        if (p == null) {
+            iconBmp = null
+            return
+        }
+        Thread {
+            val b = decodeSampled(p, 300)
+            mainHandler.post {
+                iconBmp = b
+                runCatching { NotificationManagerCompat.from(this).notify(ID, buildNotif()) }
+            }
+        }.start()
+    }
+
+    private fun decodeSampled(path: String, target: Int): Bitmap? = try {
+        val opts = BitmapFactory.Options()
+        opts.inJustDecodeBounds = true
+        BitmapFactory.decodeFile(path, opts)
+        var s = 1
+        while (opts.outWidth / (s * 2) >= target) s *= 2
+        opts.inJustDecodeBounds = false
+        opts.inSampleSize = s
+        BitmapFactory.decodeFile(path, opts)
+    } catch (e: Exception) { null }
+
     /* ---------- что играть дальше ---------- */
 
     private fun autoNext() {
         if (queue.isEmpty()) return
-        when (PlayerState.repeatMode) {
-            2 -> { playCurrent(); return }
-        }
+        if (PlayerState.repeatMode == 2) { playCurrent(); return }
         if (PlayerState.shuffleOn && queue.size > 1) {
             var r = index
             while (r == index) r = (Math.random() * queue.size).toInt()
@@ -201,7 +282,6 @@ class PlayerService : Service() {
         playCurrent()
     }
 
-    /* previous = история: тот трек, что звучал до переключения */
     private fun prev() {
         if (queue.isEmpty()) return
         if (history.isNotEmpty()) {
@@ -234,6 +314,7 @@ class PlayerService : Service() {
 
     private fun resume() {
         if (player == null) return
+        gainFocus()
         runCatching { player?.start() }
         PlayerState.playing = true
         PlayerState.error = null
@@ -244,7 +325,10 @@ class PlayerService : Service() {
 
     private fun stopAll() {
         player?.let { runCatching { it.release() } }; player = null
+        abandonFocus()
         PlayerState.playing = false; PlayerState.uri = null; PlayerState.durationMs = 0; PlayerState.error = null
+        PlayerState.coverPath = null
+        iconPath = null; iconBmp = null
         session.isActive = false
         stopForeground(true)
         stopSelf()
@@ -293,6 +377,7 @@ class PlayerService : Service() {
     private fun buildNotif(): android.app.Notification =
         NotificationCompat.Builder(this, CH)
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .setLargeIcon(iconBmp)
             .setContentTitle(PlayerState.title)
             .setContentText(PlayerState.error ?: PlayerState.artist)
             .setContentIntent(
@@ -315,6 +400,7 @@ class PlayerService : Service() {
 
     override fun onDestroy() {
         instance = null
+        runCatching { unregisterReceiver(noisyReceiver) }
         player?.let { runCatching { it.release() } }
         session.release()
         super.onDestroy()
