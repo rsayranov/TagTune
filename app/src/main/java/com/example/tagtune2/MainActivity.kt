@@ -499,26 +499,28 @@ class MainActivity : Activity() {
         } catch (e: Exception) { }
     }
 
-    private fun loadLibraryCache(): List<Track> = try {
+    private fun loadLibraryCache(): List<Track> {
         if (prefs().getInt("cache_ver", 0) != CACHE_VER) return emptyList()
-        val arr = JSONArray(cacheFile().readText())
-        val out = mutableListOf<Track>()
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            val tags = mutableListOf<String>()
-            val ta = o.optJSONArray("tags")
-            if (ta != null) for (j in 0 until ta.length()) tags.add(ta.getString(j))
-            val cover = if (o.isNull("cover")) null else o.getString("cover")
-            val lyr = if (o.isNull("lyr")) null else o.getString("lyr")
-            out.add(Track(
-                o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
-                o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
-                o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", ""),
-                o.optString("fmt", "MP3")
-            ))
-        }
-        out
-    } catch (e: Exception) { emptyList() }
+        return try {
+            val arr = JSONArray(cacheFile().readText())
+            val out = mutableListOf<Track>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val tags = mutableListOf<String>()
+                val ta = o.optJSONArray("tags")
+                if (ta != null) for (j in 0 until ta.length()) tags.add(ta.getString(j))
+                val cover = if (o.isNull("cover")) null else o.getString("cover")
+                val lyr = if (o.isNull("lyr")) null else o.getString("lyr")
+                out.add(Track(
+                    o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
+                    o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
+                    o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", ""),
+                    o.optString("fmt", "MP3")
+                ))
+            }
+            out
+        } catch (e: Exception) { emptyList() }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
