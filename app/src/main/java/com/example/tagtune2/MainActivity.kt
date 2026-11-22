@@ -58,6 +58,8 @@ import androidx.documentfile.provider.DocumentFile
 import com.example.tagtune2.utils.TagParser
 import org.json.JSONArray
 import org.json.JSONObject
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
