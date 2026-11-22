@@ -18,25 +18,27 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.images.ArtworkFactory
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
-/* ---------- полноценный редактор тегов: название/исполнитель/альбом/год/жанр/обложка/хештеги ---------- */
 object TagEditorDialog {
 
-    private const val REQ_COVER = 303
+    const val REQ_COVER = 303
 
     data class Draft(
         var title: String, var artist: String, var album: String,
-        var year: String, var genre: String, var tags: List<String>,
+        var year: String, var genre: String, var tags: MutableList<String>,
         var coverPath: String?
     )
+
+    @Volatile var _pendingCoverView: ImageView? = null
+    @Volatile var _pendingDraft: Draft? = null
 
     fun show(
         ctx: Context,
@@ -61,7 +63,6 @@ object TagEditorDialog {
         val fGenre = field(ctx, "Жанр", draft.genre); fields.addView(fGenre)
         box.addView(fields)
 
-        /* обложка */
         val coverRow = LinearLayout(ctx)
         coverRow.orientation = LinearLayout.HORIZONTAL
         coverRow.gravity = Gravity.CENTER_VERTICAL
@@ -85,9 +86,8 @@ object TagEditorDialog {
             i.addCategory(Intent.CATEGORY_OPENABLE)
             i.type = "image/*"
             (ctx as android.app.Activity).startActivityForResult(i, REQ_COVER)
-            /* результат обработаем через onActivityResult — см. MainActivity */
-            ctx.getSharedPreferences("tagtune2_tmp", Context.MODE_PRIVATE)
-                .edit().putString("pending_cover_target", track.uri).apply()
+            _pendingCoverView = coverView
+            _pendingDraft = draft
         }
         val btnRemove = miniBtn(ctx, "Удалить") {
             draft.coverPath = null
@@ -98,7 +98,6 @@ object TagEditorDialog {
         coverRow.addView(coverBtns)
         box.addView(coverRow)
 
-        /* хештеги */
         val tagsLabel = TextView(ctx)
         tagsLabel.text = "Хештеги"
         tagsLabel.setTextColor(Color.parseColor("#BBBBCC"))
@@ -159,7 +158,7 @@ object TagEditorDialog {
                 lp.setMargins(0, 0, dp(ctx, 6), dp(ctx, 6))
                 chip.layoutParams = lp
                 chip.setOnClickListener {
-                    draft.tags = draft.tags.filter { it != g }
+                    draft.tags = draft.tags.filter { it != g }.toMutableList()
                     refreshTags()
                 }
                 tagsFlow.addView(chip)
@@ -184,12 +183,11 @@ object TagEditorDialog {
                 draft.album = fAlbum.text.toString().trim().ifEmpty { track.album }
                 draft.year = fYear.text.toString().trim()
                 draft.genre = fGenre.text.toString().trim()
-                /* хештеги из input */
                 val extra = tagInput.text.toString()
                     .split(Regex("[\\s,]+"))
                     .map { it.trim().removePrefix("#").lowercase() }
                     .filter { it.isNotEmpty() }
-                draft.tags = (draft.tags + extra).distinct()
+                draft.tags = (draft.tags + extra).distinct().toMutableList()
                 onSave(draft)
                 dialog.dismiss()
             }
@@ -197,7 +195,7 @@ object TagEditorDialog {
             tagInput.setOnEditorActionListener { _, _, _ ->
                 val t = tagInput.text.toString().trim().removePrefix("#").lowercase()
                 if (t.isNotEmpty() && !draft.tags.contains(t)) {
-                    draft.tags = (draft.tags + t).distinct()
+                    draft.tags = (draft.tags + t).distinct().toMutableList()
                     tagInput.setText("")
                     refreshTags()
                 }
@@ -207,23 +205,8 @@ object TagEditorDialog {
             refreshTags()
         }
 
-        /* сохраняем ссылку на coverView, чтобы onActivityResult мог обновить картинку */
-        dialog.setOnDismissListener {
-            ctx.getSharedPreferences("tagtune2_tmp", Context.MODE_PRIVATE)
-                .edit().remove("pending_cover_target").apply()
-        }
-
         dialog.show()
-        /* пробрасываем coverView через prefs-ключ, чтобы onActivityResult нашёл его */
-        ctx.getSharedPreferences("tagtune2_tmp", Context.MODE_PRIVATE)
-            .edit().putInt("cover_view_hash", coverView.hashCode()).apply()
-        /* храним сам coverView в статическом поле — грубо, но работает для одного диалога */
-        _pendingCoverView = coverView
-        _pendingDraft = draft
     }
-
-    @Volatile var _pendingCoverView: ImageView? = null
-    @Volatile var _pendingDraft: Draft? = null
 
     fun applyCoverFromUri(ctx: Context, uri: Uri) {
         val view = _pendingCoverView ?: return
@@ -298,8 +281,6 @@ object TagEditorDialog {
 
     private fun dp(ctx: Context, n: Int) = (ctx.resources.displayMetrics.density * n).toInt()
 
-    /* ---------- запись в файл ---------- */
-
     fun write(ctx: Context, track: MainActivity.Track, draft: Draft, onDone: (Boolean, String) -> Unit) {
         Thread {
             var ok = false; var msg = "ок"
@@ -326,11 +307,10 @@ object TagEditorDialog {
                     val nonTag = old.split("\n").map { it.trimEnd() }
                         .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
                     tag.comment = (nonTag + tagsLine).joinToString("\n")
-                    /* обложка */
                     draft.coverPath?.let { p ->
                         val bmp = BitmapFactory.decodeFile(p)
                         if (bmp != null) {
-                            val baos = java.io.ByteArrayOutputStream()
+                            val baos = ByteArrayOutputStream()
                             bmp.compress(Bitmap.CompressFormat.JPEG, 90, baos)
                             tag.setAlbumImage(baos.toByteArray(), "image/jpeg")
                         }
@@ -354,16 +334,10 @@ object TagEditorDialog {
                     val nonTag = old.split("\n").map { it.trimEnd() }
                         .filter { it.trim().isNotEmpty() && !it.trim().startsWith("#") }
                     tag.setField(FieldKey.COMMENT, (nonTag + tagsLine).joinToString("\n"))
-                    /* обложка */
                     draft.coverPath?.let { p ->
-                        val bmp = BitmapFactory.decodeFile(p)
-                        if (bmp != null) {
-                            val baos = java.io.ByteArrayOutputStream()
-                            bmp.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-                            val art = ArtworkFactory.createArtworkFromFile(File(p))
-                            tag.deleteArtworkField()
-                            tag.setField(art)
-                        }
+                        val art = ArtworkFactory.createArtworkFromFile(File(p))
+                        tag.deleteArtworkField()
+                        tag.setField(art)
                     } ?: run {
                         try { tag.deleteArtworkField() } catch (_: Exception) { }
                     }
