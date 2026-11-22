@@ -2,6 +2,8 @@ package com.example.tagtune2
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -12,6 +14,7 @@ import android.graphics.ColorFilter
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
@@ -48,6 +51,7 @@ import android.widget.MultiAutoCompleteTextView
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
@@ -59,6 +63,9 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.util.Date
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
@@ -146,7 +153,7 @@ class FlowLayout(context: android.content.Context) : ViewGroup(context) {
     override fun checkLayoutParams(p: LayoutParams?): Boolean = p is MarginLayoutParams
 }
 
-/* ---------- читает ID3-шапку mp3: теги, обложка, метаданные, текст ---------- */
+/* ---------- читает ID3-шапку mp3 ---------- */
 object Id3Reader {
     data class Result(
         val comment: String?, val cover: ByteArray?,
@@ -268,6 +275,7 @@ class MainActivity : Activity() {
     private val ACCENT = Color.parseColor("#FF4D6D")
     private val GRAY = Color.parseColor("#8D81A3")
     private val WHITE = Color.parseColor("#EEEEF5")
+    private val CARD_BG = Color.parseColor("#1E1E2A")
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val HL = Color.argb(51, 255, 77, 109)
     private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
@@ -367,6 +375,7 @@ class MainActivity : Activity() {
     private fun fmt(ms: Long): String { val s = ms / 1000; return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
     private fun curTrack(): Track? = tracks.find { it.uri == PlayerState.uri }
     private fun cacheFile() = File(filesDir, "library_cache.json")
+    private fun crashFile() = File(filesDir, "crash_log.txt")
     private fun formatColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
@@ -420,6 +429,15 @@ class MainActivity : Activity() {
     private fun pillBg(color: Int, radiusDp: Int): GradientDrawable =
         GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
 
+    private fun roundCorners(v: View, rDp: Int) {
+        v.clipToOutline = true
+        v.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(vv: View, o: Outline) {
+                o.setRoundRect(0, 0, vv.width, vv.height, dp(rDp).toFloat())
+            }
+        }
+    }
+
     private fun rowBg(active: Boolean): Drawable? =
         if (active) GradientDrawable().apply {
             setColor(Color.TRANSPARENT)
@@ -432,6 +450,21 @@ class MainActivity : Activity() {
         sld.addState(intArrayOf(android.R.attr.state_pressed), PressCircleDrawable(ACCENT))
         sld.addState(intArrayOf(), PressCircleDrawable(Color.TRANSPARENT))
         return sld
+    }
+
+    private fun settingsRow(text: String, click: () -> Unit): Button {
+        val b = Button(this)
+        b.text = text
+        b.isAllCaps = false
+        b.textSize = 15f
+        b.setTextColor(WHITE)
+        b.gravity = Gravity.CENTER
+        b.background = pillBg(CARD_BG, 12)
+        b.setOnClickListener { click() }
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+        lp.setMargins(0, dp(8), 0, 0)
+        b.layoutParams = lp
+        return b
     }
 
     /* ---------- бегущая строка ---------- */
@@ -479,7 +512,50 @@ class MainActivity : Activity() {
         return Pair(hsv, tv)
     }
 
-    /* ---------- кэш библиотеки (версия схемы: при смене — авто-перескан) ---------- */
+    /* ---------- краш-лог: пишем стектрейс при любом падении ---------- */
+
+    private fun installCrashHandler() {
+        val default = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                val sw = StringWriter()
+                e.printStackTrace(PrintWriter(sw))
+                val entry = "=== ${Date()} | поток: ${t.name} ===\n$sw\n"
+                val old = if (crashFile().exists()) crashFile().readText() else ""
+                crashFile().writeText((entry + old).take(200_000))
+            } catch (ignored: Exception) { }
+            default?.uncaughtException(t, e)
+        }
+    }
+
+    private fun openCrashLogDialog() {
+        val text = if (crashFile().exists()) crashFile().readText() else "Крашей не зафиксировано."
+        val scroll = ScrollView(this)
+        val tv = TextView(this)
+        tv.text = text
+        tv.typeface = Typeface.MONOSPACE
+        tv.textSize = 11f
+        tv.setTextColor(WHITE)
+        tv.setTextIsSelectable(true)
+        tv.setPadding(dp(16), dp(8), dp(16), dp(16))
+        scroll.addView(tv)
+        AlertDialog.Builder(this)
+            .setTitle("Логи ошибок")
+            .setView(scroll)
+            .setPositiveButton("Скопировать") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("tagtune crash log", text))
+                Toast.makeText(this, "Скопировано в буфер", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Очистить") { _, _ ->
+                crashFile().delete()
+                Toast.makeText(this, "Лог очищен", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
+    /* ---------- кэш библиотеки ---------- */
 
     private fun saveLibraryCache() {
         try {
@@ -524,6 +600,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installCrashHandler()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 303)
         }
@@ -546,7 +623,7 @@ class MainActivity : Activity() {
         headTitle.textSize = 26f; headTitle.setTextColor(WHITE)
         headTitle.setSingleLine(true); headTitle.ellipsize = TextUtils.TruncateAt.END
         topRow.addView(headTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val settingsBtn = IconView(this); settingsBtn.icon = "gear"; settingsBtn.setColor(WHITE)
+        val settingsBtn = IconView(this); settingsBtn.icon = "sliders"; settingsBtn.setColor(WHITE)
         settingsBtn.background = pressCircle()
         settingsBtn.setOnClickListener { showSettings() }
         topRow.addView(settingsBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
@@ -564,7 +641,7 @@ class MainActivity : Activity() {
         searchInput.setTextColor(WHITE)
         searchInput.setHintTextColor(GRAY)
         searchInput.background = GradientDrawable().apply {
-            setColor(Color.parseColor("#1E1E2A"))
+            setColor(CARD_BG)
             cornerRadius = dp(12).toFloat()
         }
         searchInput.setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -581,6 +658,7 @@ class MainActivity : Activity() {
         })
 
         rowsBox = LinearLayout(this); rowsBox.orientation = LinearLayout.VERTICAL
+        rowsBox.setPadding(0, dp(12), 0, 0)
         contentScroll = ScrollView(this)
         contentBox = LinearLayout(this); contentBox.orientation = LinearLayout.VERTICAL
         contentScroll.addView(contentBox)
@@ -658,7 +736,9 @@ class MainActivity : Activity() {
         val nbFmtRow = LinearLayout(this); nbFmtRow.orientation = LinearLayout.HORIZONTAL
         nbFmtRow.gravity = Gravity.CENTER_VERTICAL
         nbFmtRow.setPadding(0, dp(3), 0, 0)
-        nbFormat = TextView(this); nbFormat.textSize = 11f; nbFormat.setTextColor(LOSSY_ORANGE)
+        nbFormat = TextView(this); nbFormat.textSize = 11f
+        nbFormat.setTypeface(Typeface.DEFAULT_BOLD)
+        nbFormat.setTextColor(LOSSY_ORANGE)
         nbFormat.background = pillBg(BUBBLE_BG, 99)
         nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
         nbBitrate = TextView(this); nbBitrate.textSize = 11f
@@ -674,7 +754,7 @@ class MainActivity : Activity() {
         nbNext = IconView(this); nbNext.icon = "next"; nbNext.setColor(WHITE)
         nbNext.background = pressCircle()
         nbNext.setOnClickListener { PlayerService.cmd(this, "next") }
-        val nbNextLp = LinearLayout.LayoutParams(dp(36), dp(36))
+        val nbNextLp = LinearLayout.LayoutParams(dp(40), dp(40))
         nbNextLp.setMargins(dp(4), 0, 0, 0)
         nbBar.addView(nbNext, nbNextLp)
 
@@ -740,7 +820,9 @@ class MainActivity : Activity() {
 
         tagsScroll = HorizontalScrollView(this)
         tagsScroll.isHorizontalScrollBarEnabled = false
+        tagsScroll.setFillViewport(true)
         tagsRow = LinearLayout(this); tagsRow.orientation = LinearLayout.HORIZONTAL
+        tagsRow.gravity = Gravity.CENTER
         tagsRow.setPadding(dp(6), dp(4), dp(6), 0)
         tagsScroll.addView(tagsRow)
         attachAutoScroll(tagsScroll)
@@ -769,6 +851,7 @@ class MainActivity : Activity() {
         val fmtGroup = LinearLayout(this); fmtGroup.orientation = LinearLayout.HORIZONTAL
         fmtGroup.gravity = Gravity.CENTER
         pFormat = TextView(this); pFormat.textSize = 13f
+        pFormat.setTypeface(Typeface.DEFAULT_BOLD)
         pFormat.setTextColor(LOSSY_ORANGE)
         pFormat.background = pillBg(BUBBLE_BG, 99)
         pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
@@ -840,30 +923,36 @@ class MainActivity : Activity() {
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: НАСТРОЙКИ ---------- */
+        /* ---------- ЭКРАН: НАСТРОЙКИ (без кнопки назад, в стиле медиатеки) ---------- */
         settingsScreen = LinearLayout(this)
         settingsScreen.orientation = LinearLayout.VERTICAL
         settingsScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
         settingsScreen.visibility = View.GONE
 
-        val sBack = Button(this); sBack.text = "⬅ Медиатека"
-        sBack.setOnClickListener { showLibrary() }
-        settingsScreen.addView(sBack)
-        val sTitle = TextView(this); sTitle.text = "⚙ Настройки"
-        sTitle.textSize = 20f; sTitle.setTextColor(WHITE)
-        sTitle.setPadding(0, dp(8), 0, dp(8))
-        settingsScreen.addView(sTitle)
+        val sHead = LinearLayout(this); sHead.orientation = LinearLayout.HORIZONTAL
+        sHead.gravity = Gravity.CENTER_VERTICAL
+        val sTitle = TextView(this); sTitle.text = "Настройки"
+        sTitle.textSize = 26f; sTitle.setTextColor(WHITE)
+        sTitle.setSingleLine(true); sTitle.ellipsize = TextUtils.TruncateAt.END
+        sHead.addView(sTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val sIcon = IconView(this); sIcon.icon = "sliders"; sIcon.setColor(WHITE)
+        sHead.addView(sIcon, LinearLayout.LayoutParams(dp(30), dp(30)))
+        settingsScreen.addView(sHead)
+
+        val sScroll = ScrollView(this)
+        val sBox = LinearLayout(this); sBox.orientation = LinearLayout.VERTICAL
+        sBox.setPadding(0, dp(12), 0, 0)
+        sScroll.addView(sBox)
+        settingsScreen.addView(sScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
         val sLabel = TextView(this); sLabel.text = "Папки с музыкой:"
         sLabel.setTextColor(Color.parseColor("#BBBBCC"))
-        settingsScreen.addView(sLabel)
+        sBox.addView(sLabel)
         foldersBox = LinearLayout(this); foldersBox.orientation = LinearLayout.VERTICAL
-        settingsScreen.addView(foldersBox)
-        val addBtn = Button(this); addBtn.text = "＋ Добавить папку"
-        addBtn.setOnClickListener { pickFolder() }
-        settingsScreen.addView(addBtn)
-        val rescanBtn = Button(this); rescanBtn.text = "🔄 Пересканировать"
-        rescanBtn.setOnClickListener { startScan() }
-        settingsScreen.addView(rescanBtn)
+        sBox.addView(foldersBox)
+        sBox.addView(settingsRow("＋ Добавить папку") { pickFolder() })
+        sBox.addView(settingsRow("🔄 Пересканировать") { startScan() })
+        sBox.addView(settingsRow("📋 Логи ошибок") { openCrashLogDialog() })
 
         root.addView(settingsScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
@@ -987,24 +1076,32 @@ class MainActivity : Activity() {
         if (trees.isEmpty()) {
             val none = TextView(this); none.text = "Папок пока нет — добавь первую."
             none.setTextColor(Color.parseColor("#BBBBCC"))
+            none.setPadding(0, dp(6), 0, dp(6))
             foldersBox.addView(none)
             return
         }
         for (u in trees) {
             val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.background = pillBg(CARD_BG, 12)
+            row.setPadding(dp(12), dp(10), dp(6), dp(10))
             val name = DocumentFile.fromTreeUri(this, Uri.parse(u))?.name ?: u
-            val tv = TextView(this); tv.text = "📁 $name"
+            val tv = TextView(this); tv.text = name
             tv.setTextColor(WHITE)
-            tv.setPadding(0, dp(6), 0, dp(6))
+            tv.setSingleLine(true); tv.ellipsize = TextUtils.TruncateAt.MIDDLE
             row.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             val del = Button(this); del.text = "✕"
+            del.setTextColor(GRAY)
+            del.background = pressCircle()
             del.setOnClickListener {
                 trees.remove(u)
                 prefs().edit().putStringSet("trees", trees).apply()
                 try { contentResolver.releasePersistableUriPermission(Uri.parse(u), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (e: Exception) { }
                 renderFolders(); startScan()
             }
-            row.addView(del)
+            row.addView(del, LinearLayout.LayoutParams(dp(36), dp(36)))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, dp(8), 0, 0); row.layoutParams = lp
             foldersBox.addView(row)
         }
     }
@@ -1086,8 +1183,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /* ---------- чтение трека: mp3 через Id3Reader, остальные через retriever + jaudiotagger ---------- */
-
     private fun readTrack(f: DocumentFile): Track {
         val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
         val formatLabel = when (ext) {
@@ -1147,7 +1242,6 @@ class MainActivity : Activity() {
                 }
                 mmr.release()
             } catch (e: Exception) { }
-            /* хештеги из Vorbis-комментария: читаем только шапку файла (1 МБ), без полного копирования */
             try {
                 val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "." + ext)
                 contentResolver.openInputStream(f.uri)?.use { ins ->
@@ -1265,31 +1359,41 @@ class MainActivity : Activity() {
         for (t in list.take(visibleLimit)) addTrackRow(t)
     }
 
+    /* меню: карточки как треки, но обложка = акцентная плашка со счётчиком */
     private fun addMenuRows() {
         val totalMin = tracks.sumOf { it.durationMs } / 60000
         val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
         val tagCount = tracks.flatMap { it.tags }.distinct().size
 
         val items = listOf(
-            Triple("tracks", "Треки", "${tracks.size} треков · $durStr"),
-            Triple("albums", "Альбомы", "${tracks.map { it.album }.distinct().size} альбомов"),
-            Triple("artists", "Исполнители", "${tracks.map { it.artist }.distinct().size} исполнителей"),
-            Triple("genres", "Жанры", "${tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size} жанров"),
-            Triple("tags", "Теги", "$tagCount тегов" + (if (selected.isNotEmpty()) " · выбрано: ${selected.size}" else ""))
+            Triple("tracks", "Треки", tracks.size),
+            Triple("albums", "Альбомы", tracks.map { it.album }.distinct().size),
+            Triple("artists", "Исполнители", tracks.map { it.artist }.distinct().size),
+            Triple("genres", "Жанры", tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size),
+            Triple("tags", "Теги", tagCount)
         )
-        for ((key, lbl, sub) in items) {
+        for ((key, lbl, count) in items) {
             val row = LinearLayout(this)
-            row.orientation = LinearLayout.VERTICAL
-            row.setPadding(dp(16), dp(18), dp(16), dp(18))
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(8), dp(8), dp(8), dp(8))
             row.background = null
-            val t1 = TextView(this); t1.text = lbl
-            t1.textSize = 19f; t1.setTextColor(WHITE)
-            val t2 = TextView(this); t2.text = sub
-            t2.setTextColor(Color.parseColor("#BBBBCC"))
-            t2.setPadding(0, dp(4), 0, 0)
-            row.addView(t1); row.addView(t2)
+            val cover = TextView(this)
+            cover.text = count.toString()
+            cover.textSize = 22f
+            cover.setTypeface(Typeface.DEFAULT_BOLD)
+            cover.setTextColor(WHITE)
+            cover.gravity = Gravity.CENTER
+            cover.background = pillBg(ACCENT, 10)
+            roundCorners(cover, 10)
+            row.addView(cover, LinearLayout.LayoutParams(dp(72), dp(72)))
+            val name = TextView(this); name.text = lbl
+            name.textSize = 26f; name.setTextColor(WHITE)
+            name.setSingleLine(true); name.ellipsize = TextUtils.TruncateAt.END
+            name.setPadding(dp(12), 0, dp(6), 0)
+            row.addView(name, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.setMargins(0, 0, 0, dp(10)); row.layoutParams = lp
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
             row.tag = "header"
             row.setOnClickListener { goTab(key) }
             rowsBox.addView(row)
@@ -1300,7 +1404,7 @@ class MainActivity : Activity() {
         pageTotal = untagged.size
         if (untagged.isNotEmpty()) {
             val h = TextView(this)
-            h.text = "Без тегов (${untagged.size}) — кнопка бирки на карточке откроет редактор:"
+            h.text = "Без тегов: ${untagged.size}"
             h.setTextColor(Color.parseColor("#BBBBCC"))
             h.setPadding(0, dp(6), 0, dp(8))
             h.tag = "header"
@@ -1330,6 +1434,7 @@ class MainActivity : Activity() {
         val iv = ImageView(this)
         iv.scaleType = ImageView.ScaleType.CENTER_CROP
         iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        roundCorners(iv, 10)
         bindThumb(iv, t.coverPath)
         rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
 
@@ -1344,6 +1449,7 @@ class MainActivity : Activity() {
         l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
         val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
         val fmtB = TextView(this); fmtB.text = t.format; fmtB.textSize = 11f
+        fmtB.setTypeface(Typeface.DEFAULT_BOLD)
         fmtB.setTextColor(formatColor(t.format))
         fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
         val br = TextView(this); br.text = if (t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
@@ -1389,6 +1495,7 @@ class MainActivity : Activity() {
             val iv = ImageView(this)
             iv.scaleType = ImageView.ScaleType.CENTER_CROP
             iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            roundCorners(iv, 10)
             bindThumb(iv, first.coverPath)
             rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
             val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
@@ -1404,6 +1511,7 @@ class MainActivity : Activity() {
             l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
             val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
             val fmtB = TextView(this); fmtB.text = first.format; fmtB.textSize = 11f
+            fmtB.setTypeface(Typeface.DEFAULT_BOLD)
             fmtB.setTextColor(formatColor(first.format))
             fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
             val cnt = TextView(this); cnt.text = "${list.size} треков"; cnt.textSize = 11f
@@ -1625,8 +1733,6 @@ class MainActivity : Activity() {
 
     private fun writeTag(t: Track, tag: String, add: Boolean, cb: (Boolean, String) -> Unit) =
         writeTags(t, listOf(tag), add, cb)
-
-    /* ---------- запись тегов: mp3 → mp3agic (ID3 COMM), остальные → jaudiotagger (Vorbis COMMENT) ---------- */
 
     private fun writeTags(t: Track, tags: List<String>, add: Boolean, cb: (Boolean, String) -> Unit) {
         Thread {
