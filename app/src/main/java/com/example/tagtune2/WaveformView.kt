@@ -22,11 +22,13 @@ class WaveformView(context: Context) : View(context) {
     private var peaks: FloatArray? = null
     private var target = 0f
     private var shown = 0f
+    private var accent = Color.parseColor("#FF4D6D")
     var onSeek: ((Float) -> Unit)? = null
     private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     fun setPeaks(p: FloatArray?) { peaks = p; invalidate() }
     fun setProgress(f: Float) { target = f.coerceIn(0f, 1f); invalidate() }
+    fun setAccent(color: Int) { accent = color; invalidate() }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -37,7 +39,6 @@ class WaveformView(context: Context) : View(context) {
             canvas.drawRect(0f, h / 2 - 1f, w, h / 2 + 1f, barPaint)
             return
         }
-        /* плавное догоняние цели: без ступенек между опросами позиции */
         if (abs(target - shown) > 0.0005f) {
             shown += (target - shown) * 0.35f
             postInvalidateOnAnimation()
@@ -56,7 +57,7 @@ class WaveformView(context: Context) : View(context) {
             val frac = (shown * n - i).coerceIn(0f, 1f)
             if (frac > 0f) {
                 val wp = bw * frac
-                barPaint.color = Color.parseColor("#FF4D6D")
+                barPaint.color = accent
                 val r = minOf(bw / 2, wp / 2)
                 canvas.drawRoundRect(x, top, x + wp, bottom, r, r, barPaint)
             }
@@ -97,7 +98,6 @@ class WaveformView(context: Context) : View(context) {
             return a
         }
 
-        /* скорость важнее точности: декодируем только короткие окна с прыжками по синк-точкам */
         private fun fastPeaks(ctx: Context, uri: Uri, durationMs: Long, buckets: Int): FloatArray? {
             if (durationMs <= 0) return null
             val extractor = MediaExtractor()
