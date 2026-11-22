@@ -18,6 +18,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -280,7 +282,7 @@ class MainActivity : Activity() {
     private val HL = Color.argb(51, 255, 77, 109)
     private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
     private val LOSSY_ORANGE = Color.parseColor("#FF9800")
-    private val CACHE_VER = 2
+    private val CACHE_VER = 3
     private val HEAD_BYTES = 1024 * 1024
     private val AUDIO_EXTS = setOf("mp3", "flac", "ogg", "oga", "opus")
     private val SEARCH_PULL_DP = 44
@@ -301,7 +303,6 @@ class MainActivity : Activity() {
     private lateinit var nbTitle: TextView
     private lateinit var nbArtist: TextView
     private lateinit var nbFormat: TextView
-    private lateinit var nbBitrate: TextView
     private lateinit var nbPlay: IconView
     private lateinit var nbNext: IconView
     private lateinit var npCover: ImageView
@@ -309,7 +310,6 @@ class MainActivity : Activity() {
     private lateinit var pArtist: TextView
     private lateinit var pAlbum: TextView
     private lateinit var pFormat: TextView
-    private lateinit var pBitrate: TextView
     private lateinit var tagsScroll: HorizontalScrollView
     private lateinit var tagsRow: LinearLayout
     private lateinit var waveView: WaveformView
@@ -329,7 +329,8 @@ class MainActivity : Activity() {
         val tags: List<String>, val coverPath: String? = null,
         val album: String = "Неизвестный альбом", val genre: String = "",
         val durationMs: Long = 0, val bitrateKbps: Int = 0, val lyrics: String? = null,
-        val year: String = "", val format: String = "MP3"
+        val year: String = "", val format: String = "MP3",
+        val sampleRateHz: Int = 0, val bitDepth: Int = 0
     )
 
     private var tracks = listOf<Track>()
@@ -379,6 +380,29 @@ class MainActivity : Activity() {
     private fun formatColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
+
+    /* 44100 -> 44.1kHz, 48000 -> 48kHz */
+    private fun khzStr(hz: Int): String {
+        if (hz <= 0) return ""
+        val d = hz / 1000.0
+        return if (d == d.toLong().toDouble()) "${d.toLong()}kHz" else "${d}kHz"
+    }
+
+    /* lossy: MP3 44.1kHz/320kbps; flac: FLAC 24-bit/96kHz */
+    private fun specString(t: Track): String {
+        val khz = khzStr(t.sampleRateHz)
+        return if (t.format == "FLAC") {
+            val bits = if (t.bitDepth > 0) "${t.bitDepth}-bit/" else ""
+            if (bits.isNotEmpty() || khz.isNotEmpty()) "${t.format} $bits$khz" else t.format
+        } else {
+            val parts = listOfNotNull(
+                khz.takeIf { it.isNotEmpty() },
+                if (t.bitrateKbps > 0) "${t.bitrateKbps}kbps" else null
+            )
+            if (parts.isNotEmpty()) "${t.format} " + parts.joinToString("/") else t.format
+        }
+    }
+
     private fun matches(t: Track): Boolean {
         val q = searchQuery.trim()
         if (q.isEmpty()) return true
@@ -512,7 +536,7 @@ class MainActivity : Activity() {
         return Pair(hsv, tv)
     }
 
-    /* ---------- краш-лог: пишем стектрейс при любом падении ---------- */
+    /* ---------- краш-лог ---------- */
 
     private fun installCrashHandler() {
         val default = Thread.getDefaultUncaughtExceptionHandler()
@@ -565,6 +589,7 @@ class MainActivity : Activity() {
                 o.put("uri", t.uri); o.put("title", t.title); o.put("artist", t.artist)
                 o.put("album", t.album); o.put("genre", t.genre); o.put("dur", t.durationMs)
                 o.put("br", t.bitrateKbps); o.put("yr", t.year); o.put("fmt", t.format)
+                o.put("sr", t.sampleRateHz); o.put("bd", t.bitDepth)
                 if (t.lyrics != null) o.put("lyr", t.lyrics) else o.put("lyr", JSONObject.NULL)
                 o.put("tags", JSONArray(t.tags))
                 if (t.coverPath != null) o.put("cover", t.coverPath) else o.put("cover", JSONObject.NULL)
@@ -591,7 +616,7 @@ class MainActivity : Activity() {
                     o.getString("uri"), o.getString("title"), o.getString("artist"), tags, cover,
                     o.optString("album", "Неизвестный альбом"), o.optString("genre", ""),
                     o.optLong("dur", 0), o.optInt("br", 0), lyr, o.optString("yr", ""),
-                    o.optString("fmt", "MP3")
+                    o.optString("fmt", "MP3"), o.optInt("sr", 0), o.optInt("bd", 0)
                 ))
             }
             out
@@ -741,17 +766,18 @@ class MainActivity : Activity() {
         nbFormat.setTextColor(LOSSY_ORANGE)
         nbFormat.background = pillBg(BUBBLE_BG, 99)
         nbFormat.setPadding(dp(8), dp(2), dp(8), dp(2))
-        nbBitrate = TextView(this); nbBitrate.textSize = 11f
-        nbBitrate.setTextColor(Color.parseColor("#9A93A8")); nbBitrate.setPadding(dp(6), 0, 0, 0)
-        nbFmtRow.addView(nbFormat); nbFmtRow.addView(nbBitrate)
+        nbFmtRow.addView(nbFormat)
         nbInfo.addView(nbFmtRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         nbBar.addView(nbInfo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
+        /* кнопки одного размера: площадки 40dp и глифы уравнены через glyphScale */
         nbPlay = IconView(this); nbPlay.icon = "play"; nbPlay.setColor(WHITE)
+        nbPlay.glyphScale = 1f
         nbPlay.background = pressCircle()
         nbPlay.setOnClickListener { PlayerService.cmd(this, "toggle") }
         nbBar.addView(nbPlay, LinearLayout.LayoutParams(dp(40), dp(40)))
         nbNext = IconView(this); nbNext.icon = "next"; nbNext.setColor(WHITE)
+        nbNext.glyphScale = 0.775f
         nbNext.background = pressCircle()
         nbNext.setOnClickListener { PlayerService.cmd(this, "next") }
         val nbNextLp = LinearLayout.LayoutParams(dp(40), dp(40))
@@ -855,17 +881,13 @@ class MainActivity : Activity() {
         pFormat.setTextColor(LOSSY_ORANGE)
         pFormat.background = pillBg(BUBBLE_BG, 99)
         pFormat.setPadding(dp(10), dp(3), dp(10), dp(3))
-        pBitrate = TextView(this); pBitrate.textSize = 13f
-        pBitrate.setTextColor(Color.parseColor("#9A93A8"))
-        pBitrate.setPadding(dp(6), 0, 0, 0)
         fmtGroup.addView(pFormat)
-        fmtGroup.addView(pBitrate)
-        tDur = TextView(this); tDur.text = "0:00"; tDur.textSize = 13f
-        tDur.setTextColor(Color.parseColor("#9A93A8"))
-        tDur.gravity = Gravity.END
         times.addView(tCur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         times.addView(fmtGroup, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         times.addView(tDur, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        tDur = TextView(this); tDur.text = "0:00"; tDur.textSize = 13f
+        tDur.setTextColor(Color.parseColor("#9A93A8"))
+        tDur.gravity = Gravity.END
         playerScreen.addView(times, timesLp)
 
         val transport = LinearLayout(this); transport.orientation = LinearLayout.HORIZONTAL
@@ -923,21 +945,16 @@ class MainActivity : Activity() {
 
         root.addView(playerScreen, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
 
-        /* ---------- ЭКРАН: НАСТРОЙКИ (без кнопки назад, в стиле медиатеки) ---------- */
+        /* ---------- ЭКРАН: НАСТРОЙКИ (без иконки в шапке) ---------- */
         settingsScreen = LinearLayout(this)
         settingsScreen.orientation = LinearLayout.VERTICAL
         settingsScreen.setPadding(dp(14), dp(14), dp(14), dp(14))
         settingsScreen.visibility = View.GONE
 
-        val sHead = LinearLayout(this); sHead.orientation = LinearLayout.HORIZONTAL
-        sHead.gravity = Gravity.CENTER_VERTICAL
         val sTitle = TextView(this); sTitle.text = "Настройки"
         sTitle.textSize = 26f; sTitle.setTextColor(WHITE)
         sTitle.setSingleLine(true); sTitle.ellipsize = TextUtils.TruncateAt.END
-        sHead.addView(sTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val sIcon = IconView(this); sIcon.icon = "sliders"; sIcon.setColor(WHITE)
-        sHead.addView(sIcon, LinearLayout.LayoutParams(dp(30), dp(30)))
-        settingsScreen.addView(sHead)
+        settingsScreen.addView(sTitle)
 
         val sScroll = ScrollView(this)
         val sBox = LinearLayout(this); sBox.orientation = LinearLayout.VERTICAL
@@ -1183,6 +1200,8 @@ class MainActivity : Activity() {
         }
     }
 
+    /* ---------- чтение трека ---------- */
+
     private fun readTrack(f: DocumentFile): Track {
         val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
         val formatLabel = when (ext) {
@@ -1200,6 +1219,8 @@ class MainActivity : Activity() {
         var coverPath: String? = null
         var lyrics: String? = null
         var year = ""
+        var sampleRate = 0
+        var bitDepth = 0
 
         if (ext == "mp3") {
             try {
@@ -1271,12 +1292,37 @@ class MainActivity : Activity() {
                 mmr.release()
             } catch (e: Exception) { }
         }
+
+        /* частота дискретизации и разрядность — через MediaExtractor (все форматы) */
+        try {
+            val ex = MediaExtractor()
+            ex.setDataSource(this, f.uri)
+            for (i in 0 until ex.trackCount) {
+                val mf = ex.getTrackFormat(i)
+                val mime = mf.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("audio/")) continue
+                if (mf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                    sampleRate = mf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                }
+                if (mf.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                    bitDepth = when (mf.getInteger(MediaFormat.KEY_PCM_ENCODING)) {
+                        2 -> 16
+                        5 -> 24
+                        6 -> 32
+                        else -> 0
+                    }
+                }
+                break
+            }
+            ex.release()
+        } catch (e: Exception) { }
+
         var bitrate = 0
         if (durationMs > 0) {
             val len = runCatching { f.length() }.getOrDefault(0L)
             if (len > 0) bitrate = (len * 8 / durationMs).toInt()
         }
-        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel)
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel, sampleRate, bitDepth)
     }
 
     /* ---------- контент медиатеки ---------- */
@@ -1359,7 +1405,6 @@ class MainActivity : Activity() {
         for (t in list.take(visibleLimit)) addTrackRow(t)
     }
 
-    /* меню: карточки как треки, но обложка = акцентная плашка со счётчиком */
     private fun addMenuRows() {
         val totalMin = tracks.sumOf { it.durationMs } / 60000
         val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
@@ -1448,19 +1493,16 @@ class MainActivity : Activity() {
         l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
         l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
         val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-        val fmtB = TextView(this); fmtB.text = t.format; fmtB.textSize = 11f
+        val fmtB = TextView(this); fmtB.text = specString(t); fmtB.textSize = 11f
         fmtB.setTypeface(Typeface.DEFAULT_BOLD)
         fmtB.setTextColor(formatColor(t.format))
         fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
-        val br = TextView(this); br.text = if (t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
-        br.textSize = 11f; br.setTextColor(Color.parseColor("#9A93A8")); br.setPadding(dp(5), 0, 0, 0)
         val tagsTv = TextView(this)
         tagsTv.text = highlight(t.tags.joinToString(" ") { "#$it" })
         tagsTv.textSize = 11f; tagsTv.setTextColor(ACCENT)
         tagsTv.setSingleLine(true); tagsTv.ellipsize = TextUtils.TruncateAt.END
         tagsTv.setPadding(dp(6), 0, 0, 0)
         l4.addView(fmtB)
-        l4.addView(br)
         l4.addView(tagsTv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
         rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -1510,7 +1552,7 @@ class MainActivity : Activity() {
             val l3 = TextView(this); l3.text = if (yr.isNotEmpty()) yr else "Год не указан"
             l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
             val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
-            val fmtB = TextView(this); fmtB.text = first.format; fmtB.textSize = 11f
+            val fmtB = TextView(this); fmtB.text = specString(first); fmtB.textSize = 11f
             fmtB.setTypeface(Typeface.DEFAULT_BOLD)
             fmtB.setTextColor(formatColor(first.format))
             fmtB.background = pillBg(BUBBLE_BG, 99); fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
@@ -1794,10 +1836,8 @@ class MainActivity : Activity() {
         pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
         pArtist.text = PlayerState.artist
         pAlbum.text = t?.album ?: ""
-        pFormat.text = t?.format ?: ""
-        pFormat.setTextColor(formatColor(pFormat.text.toString()))
-        pBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
-        pBitrate.visibility = if (pBitrate.text.isEmpty()) View.GONE else View.VISIBLE
+        pFormat.text = t?.let { specString(it) } ?: ""
+        pFormat.setTextColor(formatColor(t?.format ?: ""))
         tagsRow.removeAllViews()
         val tags = t?.tags ?: emptyList()
         for (g in tags) {
@@ -1851,10 +1891,8 @@ class MainActivity : Activity() {
             else -> PlayerState.title
         }
         nbArtist.text = PlayerState.artist
-        nbFormat.text = t?.format ?: ""
-        nbFormat.setTextColor(formatColor(nbFormat.text.toString()))
-        nbBitrate.text = if (t != null && t.bitrateKbps > 0) "${t.bitrateKbps} kbps" else ""
-        nbBitrate.visibility = if (nbBitrate.text.isEmpty()) View.GONE else View.VISIBLE
+        nbFormat.text = t?.let { specString(it) } ?: ""
+        nbFormat.setTextColor(formatColor(t?.format ?: ""))
         nbPlay.icon = if (playing) "pause" else "play"
         if (playing) nbBar.visibility = View.VISIBLE
         playI.icon = if (playing) "pause" else "play"
