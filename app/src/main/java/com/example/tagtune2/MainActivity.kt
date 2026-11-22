@@ -56,10 +56,10 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import com.example.tagtune2.utils.TagParser
-import org.json.JSONArray
-import org.json.JSONObject
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -79,6 +79,27 @@ class PressCircleDrawable(private val color: Int) : Drawable() {
     override fun setAlpha(alpha: Int) { p.alpha = alpha }
     override fun setColorFilter(cf: ColorFilter?) { p.colorFilter = cf }
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/* ---------- миниплеер-плашка: видит тапы и флики поверх любых детей ---------- */
+class TapBarLayout(context: android.content.Context) : LinearLayout(context) {
+    var tapListener: ((MotionEvent) -> Unit)? = null
+    var flingListener: ((Float, Float) -> Unit)? = null
+    private val gd = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent): Boolean = true
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
+            tapListener?.invoke(e)
+            return true
+        }
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            flingListener?.invoke(e2.x - (e1?.x ?: e2.x), e2.y - (e1?.y ?: e2.y))
+            return true
+        }
+    })
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        gd.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
+    }
 }
 
 class FlowLayout(context: android.content.Context) : ViewGroup(context) {
@@ -285,7 +306,7 @@ class MainActivity : Activity() {
     private lateinit var contentScroll: ScrollView
     private lateinit var searchInput: EditText
     private lateinit var foldersBox: LinearLayout
-    private lateinit var nbBar: LinearLayout
+    private lateinit var nbBar: TapBarLayout
     private lateinit var nbCover: ImageView
     private lateinit var nbTitle: TextView
     private lateinit var nbArtist: TextView
@@ -374,6 +395,12 @@ class MainActivity : Activity() {
     private fun bubbleColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
+
+    private fun hitView(v: View, ev: MotionEvent): Boolean {
+        val l = IntArray(2)
+        v.getLocationOnScreen(l)
+        return ev.rawX >= l[0] && ev.rawX <= l[0] + v.width && ev.rawY >= l[1] && ev.rawY <= l[1] + v.height
+    }
 
     private fun khzStr(hz: Int): String {
         if (hz <= 0) return ""
@@ -825,7 +852,8 @@ class MainActivity : Activity() {
             }
         }
 
-        nbBar = LinearLayout(this)
+        /* ---------- МИНИПЛЕЕР ---------- */
+        nbBar = TapBarLayout(this)
         nbBar.orientation = LinearLayout.HORIZONTAL
         nbBar.gravity = Gravity.CENTER_VERTICAL
         nbBar.background = GradientDrawable().apply {
@@ -834,21 +862,14 @@ class MainActivity : Activity() {
             cornerRadius = dp(999).toFloat()
         }
         nbBar.setPadding(dp(14), dp(10), dp(14), dp(10))
-
-        val nbGd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
-            override fun onSingleTapUp(e: MotionEvent): Boolean { showPlayer(); return true }
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-                val dx = e2.x - (e1?.x ?: e2.x)
-                val dy = e2.y - (e1?.y ?: e2.y)
-                if (!PlayerState.playing && abs(dx) > abs(dy) && abs(dx) > dp(DISMISS_FLING_DP)) {
-                    nbBar.visibility = View.GONE
-                    return true
-                }
-                return false
+        nbBar.tapListener = { ev ->
+            if (!hitView(nbPlay, ev) && !hitView(nbNext, ev)) showPlayer()
+        }
+        nbBar.flingListener = { dx, dy ->
+            if (!PlayerState.playing && abs(dx) > abs(dy) && abs(dx) > dp(DISMISS_FLING_DP)) {
+                nbBar.visibility = View.GONE
             }
-        })
-        nbBar.setOnTouchListener { _, ev -> nbGd.onTouchEvent(ev) }
+        }
 
         nbCover = ImageView(this)
         nbCover.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -1984,6 +2005,8 @@ class MainActivity : Activity() {
         }
         if (PlayerState.uri != lastPlayerUri) {
             lastPlayerUri = PlayerState.uri
+            /* мини-обложка обновляется при каждой смене трека, откуда бы она ни пришла */
+            bindThumb(nbCover, t?.coverPath)
             rebuildPlayerMeta()
         }
     }
@@ -2007,10 +2030,7 @@ class MainActivity : Activity() {
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
         nbBar.visibility = View.VISIBLE
         bigCoverUri = null; bigCoverBm = null
-        Thread {
-            val small = loadBitmap(t.coverPath, 192)
-            runOnUiThread { nbCover.setImageBitmap(small) }
-        }.start()
+        bindThumb(nbCover, t.coverPath)
         if (playerScreen.visibility == View.VISIBLE) { lastPlayerUri = null; refreshNow() }
         highlightCurrent()
     }
