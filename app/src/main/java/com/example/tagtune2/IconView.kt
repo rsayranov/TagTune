@@ -14,7 +14,6 @@ class IconView(context: Context) : View(context) {
             field = value
             invalidate()
         }
-    /* множитель размера глифа: позволяет уравнять разные пиктограммы */
     var glyphScale: Float = 1f
         set(value) {
             field = value
@@ -34,6 +33,7 @@ class IconView(context: Context) : View(context) {
             "play", "pause" -> 0.62f
             "queue", "lyrics", "tags" -> 0.66f
             "gear", "sliders" -> 0.90f
+            "volLow", "volHigh", "chevronDown" -> 0.90f
             else -> 1f
         }
         s *= glyphScale
@@ -178,6 +178,33 @@ class IconView(context: Context) : View(context) {
                 canvas.drawCircle(c - s * 0.20f, cy - s * 0.10f, s * 0.07f, paint)
                 canvas.drawCircle(c, cy + s * 0.12f, s * 0.07f, paint)
                 canvas.drawCircle(c + s * 0.20f, cy - s * 0.02f, s * 0.07f, paint)
+            }
+            "volLow", "volHigh" -> {
+                paint.style = Paint.Style.FILL
+                val sp = Path()
+                sp.moveTo(c - s * 0.30f, cy - s * 0.10f)
+                sp.lineTo(c - s * 0.14f, cy - s * 0.10f)
+                sp.lineTo(c + 0.00f, cy - s * 0.24f)
+                sp.lineTo(c + 0.00f, cy + s * 0.24f)
+                sp.lineTo(c - s * 0.14f, cy + s * 0.10f)
+                sp.lineTo(c - s * 0.30f, cy + s * 0.10f)
+                sp.close()
+                canvas.drawPath(sp, paint)
+                paint.style = Paint.Style.STROKE
+                val a1 = RectF(c - s * 0.02f, cy - s * 0.14f, c + s * 0.26f, cy + s * 0.14f)
+                canvas.drawArc(a1, -50f, 100f, false, paint)
+                if (icon == "volHigh") {
+                    val a2 = RectF(c - s * 0.10f, cy - s * 0.26f, c + s * 0.38f, cy + s * 0.26f)
+                    canvas.drawArc(a2, -50f, 100f, false, paint)
+                }
+            }
+            "chevronDown" -> {
+                paint.style = Paint.Style.STROKE
+                val p = Path()
+                p.moveTo(c - s * 0.22f, cy - s * 0.10f)
+                p.lineTo(c, cy + s * 0.12f)
+                p.lineTo(c + s * 0.22f, cy - s * 0.10f)
+                canvas.drawPath(p, paint)
             }
         }
     }
