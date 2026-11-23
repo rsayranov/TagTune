@@ -289,9 +289,9 @@ class MainActivity : Activity() {
     private val BUBBLE_BG = Color.argb(51, 160, 160, 160)
     private val LOSSLESS_GREEN = Color.parseColor("#3DDC84")
     private val LOSSY_ORANGE = Color.parseColor("#FF9800")
-    private val CACHE_VER = 4
+    private val CACHE_VER = 5
     private val HEAD_BYTES = 1024 * 1024
-    private val AUDIO_EXTS = setOf("mp3", "flac", "ogg", "oga", "opus")
+    private val AUDIO_EXTS = setOf("mp3", "flac", "ogg", "oga", "opus", "m4a")
     private val SEARCH_PULL_DP = 44
     private val DISMISS_FLING_DP = 34
     private val PLAYER_FLING_DP = 40
@@ -392,7 +392,8 @@ class MainActivity : Activity() {
     private fun cacheFile() = File(filesDir, "library_cache.json")
     private fun crashFile() = File(filesDir, "crash_log.txt")
     private fun accentAlpha(a: Int): Int = (ACCENT and 0x00FFFFFF) or (a shl 24)
-    private fun bubbleColor(format: String): Int = if (format == "FLAC") LOSSLESS_GREEN else LOSSY_ORANGE
+    private fun bubbleColor(format: String): Int =
+        if (format == "FLAC" || format == "ALAC") LOSSLESS_GREEN else LOSSY_ORANGE
     private fun extOfUri(uri: String): String =
         (Uri.parse(uri).lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
 
@@ -410,7 +411,7 @@ class MainActivity : Activity() {
 
     private fun specsString(t: Track): String {
         val khz = khzStr(t.sampleRateHz)
-        return if (t.format == "FLAC") {
+        return if (t.format == "FLAC" || t.format == "ALAC") {
             val bits = if (t.bitDepth > 0) "${t.bitDepth}-bit" else null
             listOfNotNull(bits, khz.takeIf { it.isNotEmpty() }).joinToString("/")
         } else {
@@ -1373,11 +1374,13 @@ class MainActivity : Activity() {
 
     private fun readTrack(f: DocumentFile): Track {
         val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
-        val formatLabel = when (ext) {
+        /* честный ярлык: неизвестное расширение больше не притворяется MP3 */
+        var formatLabel = when (ext) {
             "flac" -> "FLAC"
             "ogg", "oga" -> "OGG"
             "opus" -> "OPUS"
-            else -> "MP3"
+            "m4a" -> "M4A"
+            else -> if (ext.isEmpty()) "MP3" else ext.uppercase()
         }
         var title = f.name?.removeSuffix(".${f.name?.substringAfterLast('.')}") ?: f.name ?: "Без названия"
         var artist = "Неизвестный исполнитель"
@@ -1391,6 +1394,7 @@ class MainActivity : Activity() {
         var sampleRate = 0
         var bitDepth = 0
         var streamBitrate = 0
+        var isAlac = false
         val fileSize = runCatching { f.length() }.getOrDefault(0L)
         val fileMod = runCatching { f.lastModified() }.getOrDefault(0L)
 
@@ -1448,8 +1452,9 @@ class MainActivity : Activity() {
                 }
                 ex.release()
             } catch (e: Exception) { }
+            /* хештеги из комментария: сначала шапка, для m4a с moov в хвосте — полное копирование */
+            val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + "." + ext)
             try {
-                val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + "." + ext)
                 contentResolver.openInputStream(f.uri)?.use { ins ->
                     FileOutputStream(tmp).use { out ->
                         val buf = ByteArray(64 * 1024)
@@ -1465,8 +1470,22 @@ class MainActivity : Activity() {
                 val af = AudioFileIO.read(tmp)
                 val cmt = af.tag?.getFirst(FieldKey.COMMENT) ?: ""
                 tags = TagParser.extractTags(cmt)
+            } catch (e: Exception) {
+                if (ext == "m4a") {
+                    try {
+                        val full = File(cacheDir, "full_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + ".m4a")
+                        contentResolver.openInputStream(f.uri)?.use { ins ->
+                            FileOutputStream(full).use { out -> ins.copyTo(out) }
+                        }
+                        val af = AudioFileIO.read(full)
+                        val cmt = af.tag?.getFirst(FieldKey.COMMENT) ?: ""
+                        tags = TagParser.extractTags(cmt)
+                        full.delete()
+                    } catch (e2: Exception) { }
+                }
+            } finally {
                 tmp.delete()
-            } catch (e: Exception) { }
+            }
         }
 
         if (durationMs == 0L) {
@@ -1487,6 +1506,7 @@ class MainActivity : Activity() {
                 val mf = ex.getTrackFormat(i)
                 val mime = mf.getString(MediaFormat.KEY_MIME) ?: continue
                 if (!mime.startsWith("audio/")) continue
+                if (mime == "audio/alac") isAlac = true
                 if (mf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = mf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                 if (mf.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
                     bitDepth = when (mf.getInteger(MediaFormat.KEY_PCM_ENCODING)) {
@@ -1498,6 +1518,8 @@ class MainActivity : Activity() {
             }
             ex.release()
         } catch (e: Exception) { }
+
+        if (isAlac) formatLabel = "ALAC"
 
         var bitrate = streamBitrate
         if (bitrate <= 0 && durationMs > 0) {
@@ -2005,7 +2027,6 @@ class MainActivity : Activity() {
         }
         if (PlayerState.uri != lastPlayerUri) {
             lastPlayerUri = PlayerState.uri
-            /* мини-обложка обновляется при каждой смене трека, откуда бы она ни пришла */
             bindThumb(nbCover, t?.coverPath)
             rebuildPlayerMeta()
         }
@@ -2025,6 +2046,15 @@ class MainActivity : Activity() {
     }
 
     private fun play(t: Track) {
+        /* ALAC: декодера в Android нет — предупреждаем вместо падения */
+        if (t.format == "ALAC") {
+            Toast.makeText(
+                this,
+                "ALAC: в Android нет декодера этого формата — воспроизведение невозможно. Теги и обложка доступны.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
         PlayerState.coverPath = t.coverPath
         PlayerService.cmd(this, "play", items, shown.indexOf(t))
