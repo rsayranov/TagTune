@@ -51,6 +51,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
+import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -65,7 +66,9 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
@@ -419,6 +422,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun humanSize(b: Long): String = when {
+        b >= 1073741824L -> String.format(Locale.getDefault(), "%.2f ГБ", b / 1073741824.0)
+        b >= 1048576L -> String.format(Locale.getDefault(), "%.1f МБ", b / 1048576.0)
+        b >= 1024L -> String.format(Locale.getDefault(), "%.0f КБ", b / 1024.0)
+        else -> "$b Б"
+    }
+
     private fun matches(t: Track): Boolean {
         val q = searchQuery.trim()
         if (q.isEmpty()) return true
@@ -711,6 +721,96 @@ class MainActivity : Activity() {
             .setTitle("Дубликаты")
             .setView(scroll)
             .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
+    /* ---------- контекстное меню трека ---------- */
+
+    private fun showTrackMenu(t: Track, anchor: View) {
+        val pm = PopupMenu(this, anchor)
+        pm.menu.add(0, 1, 0, "Информация о файле")
+        pm.menu.add(0, 2, 1, "Редактор тегов")
+        pm.menu.add(0, 3, 2, "Поделиться")
+        pm.menu.add(0, 4, 3, "Удалить")
+        pm.setOnMenuItemClickListener { mi ->
+            when (mi.itemId) {
+                1 -> openFileInfo(t)
+                2 -> openEditor(t)
+                3 -> shareTrack(t)
+                4 -> confirmDelete(t)
+            }
+            true
+        }
+        pm.show()
+    }
+
+    private fun openFileInfo(t: Track) {
+        val df = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))
+        val name = df?.name ?: t.title
+        val mod = df?.lastModified() ?: 0L
+        val size = df?.length() ?: 0L
+        val dateStr = if (mod > 0)
+            SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(mod))
+        else "неизвестно"
+        val text = "Адрес:\n${t.uri}\n\nДата изменения:\n$dateStr\n\nРазмер:\n${humanSize(size)}"
+        val scroll = ScrollView(this)
+        val tv = TextView(this)
+        tv.text = text
+        tv.textSize = 13f
+        tv.setTextColor(WHITE)
+        tv.setTextIsSelectable(true)
+        tv.setPadding(dp(16), dp(8), dp(16), dp(16))
+        tv.setLineSpacing(dp(3).toFloat(), 1f)
+        scroll.addView(tv)
+        AlertDialog.Builder(this)
+            .setTitle(name)
+            .setView(scroll)
+            .setPositiveButton("Скопировать") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("file info", text))
+                Toast.makeText(this, "Скопировано в буфер", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
+    private fun shareTrack(t: Track) {
+        val mime = when (t.format) {
+            "MP3" -> "audio/mpeg"
+            "FLAC" -> "audio/flac"
+            "OGG" -> "audio/ogg"
+            "OPUS" -> "audio/opus"
+            "M4A", "ALAC" -> "audio/mp4"
+            else -> "audio/*"
+        }
+        val i = Intent(Intent.ACTION_SEND)
+            .setType(mime)
+            .putExtra(Intent.EXTRA_STREAM, Uri.parse(t.uri))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(i, "Поделиться треком"))
+    }
+
+    private fun confirmDelete(t: Track) {
+        AlertDialog.Builder(this)
+            .setTitle("Удалить файл?")
+            .setMessage("${t.title} — ${t.artist}\nФайл будет удалён с устройства безвозвратно.")
+            .setPositiveButton("Удалить") { _, _ ->
+                Thread {
+                    val ok = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))?.delete() == true
+                    runOnUiThread {
+                        if (ok) {
+                            if (PlayerState.uri == t.uri) PlayerService.cmd(this, "stop")
+                            tracks = tracks.filter { it.uri != t.uri }
+                            saveLibraryCache()
+                            rebuildContent()
+                            Toast.makeText(this, "Удалено", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this, "Не удалось удалить", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
@@ -1374,7 +1474,6 @@ class MainActivity : Activity() {
 
     private fun readTrack(f: DocumentFile): Track {
         val ext = (f.name?.substringAfterLast('.', "") ?: "").lowercase()
-        /* честный ярлык: неизвестное расширение больше не притворяется MP3 */
         var formatLabel = when (ext) {
             "flac" -> "FLAC"
             "ogg", "oga" -> "OGG"
@@ -1452,7 +1551,6 @@ class MainActivity : Activity() {
                 }
                 ex.release()
             } catch (e: Exception) { }
-            /* хештеги из комментария: сначала шапка, для m4a с moov в хвосте — полное копирование */
             val tmp = File(cacheDir, "head_" + Integer.toHexString(f.uri.toString().hashCode()) + "_" + fileMod + "." + ext)
             try {
                 contentResolver.openInputStream(f.uri)?.use { ins ->
@@ -1768,7 +1866,7 @@ class MainActivity : Activity() {
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
         rowL.setOnClickListener { play(t) }
-        rowL.setOnLongClickListener { openEditor(t); true }
+        rowL.setOnLongClickListener { showTrackMenu(t, rowL); true }
         rowsBox.addView(rowL)
     }
 
@@ -2046,7 +2144,6 @@ class MainActivity : Activity() {
     }
 
     private fun play(t: Track) {
-        /* ALAC: декодера в Android нет — предупреждаем вместо падения */
         if (t.format == "ALAC") {
             Toast.makeText(
                 this,
