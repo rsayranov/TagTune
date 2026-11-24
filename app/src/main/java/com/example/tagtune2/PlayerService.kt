@@ -28,6 +28,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.media.app.NotificationCompat.MediaStyle
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -101,6 +102,7 @@ class PlayerService : Service() {
     private var queue = listOf<QItem>()
     private var index = 0
     private var currentIndex = -1
+    private var savedPos = 0
     private val history = ArrayDeque<Int>()
     private var startedAtMs = 0L
     private var lastPlayAtMs = 0L
@@ -110,6 +112,7 @@ class PlayerService : Service() {
     private var focusRequest: AudioFocusRequest? = null
     private var iconPath: String? = null
     private var iconBmp: Bitmap? = null
+    private val prefs by lazy { getSharedPreferences("player_state", MODE_PRIVATE) }
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { focus ->
         when (focus) {
@@ -150,32 +153,87 @@ class PlayerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        /* обязательство перед системой: startForeground сразу, иначе краш через 5 секунд */
+        startFg()
         when (intent?.action) {
             "play" -> {
                 val newQ = (intent.getSerializableExtra("queue") as? ArrayList<*>)?.filterIsInstance<QItem>() ?: queue
                 if (newQ.map { it.uri } != queue.map { it.uri }) history.clear()
                 queue = newQ
                 index = intent.getIntExtra("index", 0)
+                savedPos = 0
                 playCurrent()
             }
             "toggle" -> if (player?.isPlaying == true) pause() else resume()
             "toggleShuffle" -> {
                 PlayerState.shuffleOn = !PlayerState.shuffleOn
+                persist(currentPosition())
                 updateState(); PlayerState.emit()
             }
             "toggleRepeat" -> {
                 PlayerState.repeatMode = (PlayerState.repeatMode + 1) % 3
+                persist(currentPosition())
                 updateState(); PlayerState.emit()
             }
             "next" -> next()
             "prev" -> prev()
             "seek" -> seek(intent.getIntExtra("seek", 0))
             "stop" -> stopAll()
+            null -> {
+                if (player == null && !restore()) {
+                    stopForeground(true)
+                    stopSelf()
+                }
+            }
         }
         return START_NOT_STICKY
     }
 
     fun currentPosition(): Int = try { player?.currentPosition ?: 0 } catch (e: Exception) { 0 }
+
+    /* ---------- переживание смерти сервиса: очередь и позиция в prefs ---------- */
+
+    private fun persist(posMs: Int) {
+        try {
+            val o = JSONObject()
+            val arr = JSONArray()
+            for (q in queue) {
+                val e = JSONObject()
+                e.put("uri", q.uri); e.put("title", q.title); e.put("artist", q.artist)
+                arr.put(e)
+            }
+            o.put("queue", arr)
+            o.put("index", index)
+            o.put("pos", posMs)
+            o.put("shuffle", PlayerState.shuffleOn)
+            o.put("repeat", PlayerState.repeatMode)
+            prefs.edit().putString("state", o.toString()).apply()
+        } catch (_: Exception) { }
+    }
+
+    private fun restore(): Boolean {
+        if (queue.isNotEmpty()) return true
+        return try {
+            val s = prefs.getString("state", null) ?: return false
+            val o = JSONObject(s)
+            val arr = o.getJSONArray("queue")
+            val q = mutableListOf<QItem>()
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONObject(i)
+                q.add(QItem(e.getString("uri"), e.getString("title"), e.getString("artist")))
+            }
+            if (q.isEmpty()) return false
+            queue = q
+            index = o.optInt("index", 0).coerceIn(0, q.size - 1)
+            savedPos = o.optInt("pos", 0)
+            PlayerState.shuffleOn = o.optBoolean("shuffle", true)
+            PlayerState.repeatMode = o.optInt("repeat", 0)
+            PlayerState.queueItems = queue
+            PlayerState.queueSize = queue.size
+            PlayerState.queuePos = index + 1
+            true
+        } catch (_: Exception) { false }
+    }
 
     private fun gainFocus() {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -204,10 +262,10 @@ class PlayerService : Service() {
         }
     }
 
-    private fun playCurrent(pushHistory: Boolean = true) {
+    private fun playCurrent(pushHistory: Boolean = true, startPosMs: Int = 0) {
         val item = queue.getOrNull(index) ?: return
         val now = SystemClock.uptimeMillis()
-        if (now - lastPlayAtMs < 250 && PlayerState.uri == item.uri) return
+        if (now - lastPlayAtMs < 250 && PlayerState.uri == item.uri && startPosMs == 0) return
         lastPlayAtMs = now
 
         if (pushHistory && currentIndex >= 0 && currentIndex != index) {
@@ -250,6 +308,7 @@ class PlayerService : Service() {
                     true
                 }
                 mp.prepare()
+                if (startPosMs > 0) runCatching { mp.seekTo(startPosMs) }
                 mp.start()
                 startedAtMs = SystemClock.uptimeMillis()
                 player = mp
@@ -307,7 +366,7 @@ class PlayerService : Service() {
     }
 
     private fun next() {
-        if (queue.isEmpty()) return
+        if (queue.isEmpty() && !restore()) return
         if (PlayerState.shuffleOn && queue.size > 1) {
             var r = index
             while (r == index) r = (Math.random() * queue.size).toInt()
@@ -317,7 +376,7 @@ class PlayerService : Service() {
     }
 
     private fun prev() {
-        if (queue.isEmpty()) return
+        if (queue.isEmpty() && !restore()) return
         if (history.isNotEmpty()) {
             index = history.removeLast()
         } else {
@@ -331,6 +390,7 @@ class PlayerService : Service() {
         PlayerState.error = msg
         player?.let { runCatching { it.release() } }
         player = null
+        persist(0)
         updateState()
         stopForeground(false)
         runCatching { NotificationManagerCompat.from(this).notify(ID, buildNotif()) }
@@ -338,8 +398,10 @@ class PlayerService : Service() {
     }
 
     private fun pause() {
+        val pos = currentPosition()
         runCatching { player?.pause() }
         PlayerState.playing = false
+        persist(pos)
         updateState()
         stopForeground(false)
         runCatching { NotificationManagerCompat.from(this).notify(ID, buildNotif()) }
@@ -347,7 +409,18 @@ class PlayerService : Service() {
     }
 
     private fun resume() {
-        if (player == null) return
+        if (player == null) {
+            /* сервис пережил смерть процесса или плеер был отпущен: поднимаем очередь и позицию */
+            if (!restore()) {
+                stopForeground(true)
+                stopSelf()
+                return
+            }
+            val pos = savedPos
+            savedPos = 0
+            playCurrent(false, pos)
+            return
+        }
         gainFocus()
         runCatching { player?.start() }
         PlayerState.playing = true
@@ -355,9 +428,14 @@ class PlayerService : Service() {
         updateState(); startFg(); PlayerState.emit()
     }
 
-    private fun seek(ms: Int) { runCatching { player?.seekTo(ms) }; updateState() }
+    private fun seek(ms: Int) {
+        runCatching { player?.seekTo(ms) }
+        persist(ms)
+        updateState()
+    }
 
     private fun stopAll() {
+        persist(currentPosition())
         player?.let { runCatching { it.release() } }; player = null
         abandonFocus()
         PlayerState.playing = false; PlayerState.uri = null; PlayerState.durationMs = 0; PlayerState.error = null
@@ -433,6 +511,7 @@ class PlayerService : Service() {
             .build()
 
     override fun onDestroy() {
+        persist(currentPosition())
         instance = null
         runCatching { unregisterReceiver(noisyReceiver) }
         player?.let { runCatching { it.release() } }
