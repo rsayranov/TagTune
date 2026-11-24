@@ -9,7 +9,9 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
+import android.graphics.drawable.RippleDrawable
+import android.content.res.ColorStateList
+import android.net.Uri
 import android.os.Build
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -19,14 +21,15 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-/* ---------- строка LRC с временем ---------- */
 data class LrcLine(val timeMs: Long, val text: String)
 
 object LrcParser {
@@ -61,7 +64,6 @@ object LrcParser {
     }
 }
 
-/* ---------- полноэкранный текст в стиле Apple Music ---------- */
 class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
 
     var onClose: (() -> Unit)? = null
@@ -75,22 +77,31 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
     private var lines = listOf<LrcLine>()
     private var timed = false
     private var curIdx = -1
-    private var durMs = 0
-    private var seeking = false
+    private var openUri: String? = null
     private val lineViews = mutableListOf<TextView>()
-    private val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    private val accents = intArrayOf(
+        Color.parseColor("#FF4D6D"), Color.parseColor("#7C4DFF"), Color.parseColor("#3DDC84"),
+        Color.parseColor("#FF9800"), Color.parseColor("#40C4FF"), Color.parseColor("#C2185B")
+    )
+    private fun accent(): Int = accents[
+        context.getSharedPreferences("tagtune2", Context.MODE_PRIVATE)
+            .getInt("accent_idx", 0).coerceIn(0, accents.size - 1)
+    ]
 
     private val scroll = ScrollView(ctx)
     private val listBox = LinearLayout(ctx)
     private val headerCover = ImageView(ctx)
     private val headerTitle = TextView(ctx)
     private val headerArtist = TextView(ctx)
-    private val seek = SeekBar(ctx)
+    private val wave = WaveformView(ctx)
     private val tCur = TextView(ctx)
     private val tLeft = TextView(ctx)
     private val fmtTv = TextView(ctx)
+    private val shufI = IconView(ctx)
     private val playI = IconView(ctx)
-    private val volSeek = SeekBar(ctx)
+    private val repI = IconView(ctx)
+    private val bLyrics = IconView(ctx)
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     private fun fmt(ms: Long): String {
@@ -103,7 +114,6 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         visibility = GONE
         setPadding(dp(20), dp(10), dp(20), dp(14))
 
-        /* ручка-шеврон сверху */
         val handleRow = LinearLayout(ctx)
         handleRow.orientation = VERTICAL
         handleRow.gravity = Gravity.CENTER_HORIZONTAL
@@ -120,7 +130,6 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         handle.setOnClickListener { onClose?.invoke() }
         addView(handleRow, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        /* шапка: обложка + название + исполнитель */
         val head = LinearLayout(ctx)
         head.orientation = HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
@@ -144,39 +153,27 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         head.addView(ht, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         addView(head, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        /* лента строк */
         scroll.isVerticalScrollBarEnabled = false
         listBox.orientation = VERTICAL
         listBox.setPadding(0, dp(30), 0, dp(60))
         scroll.addView(listBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         addView(scroll, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
-        /* прогресс */
-        seek.max = 100
-        seek.progressDrawable = GradientDrawable().apply {
-            setColor(Color.argb(70, 255, 255, 255)); cornerRadius = dp(2).toFloat()
+        /* волна остаётся, как в большом плеере */
+        wave.setAccent(accent())
+        wave.onSeek = { f ->
+            val d = PlayerState.durationMs
+            if (d > 0) onSeek?.invoke((f * d).toInt())
         }
-        seek.thumb = GradientDrawable().apply {
-            setColor(Color.WHITE); cornerRadius = dp(2).toFloat()
-            setSize(dp(28), dp(5))
-        }
-        seek.setPadding(0, dp(6), 0, dp(2))
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                if (fromUser) tCur.text = fmt(p.toLong())
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) { seeking = true }
-            override fun onStopTrackingTouch(sb: SeekBar?) {
-                seeking = false
-                onSeek?.invoke(sb?.progress ?: 0)
-            }
-        })
-        addView(seek, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        val waveLp = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(40))
+        waveLp.topMargin = dp(8)
+        addView(wave, waveLp)
 
-        /* время + формат + остаток */
         val times = LinearLayout(ctx)
         times.orientation = HORIZONTAL
         times.gravity = Gravity.CENTER_VERTICAL
+        val timesLp = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        timesLp.topMargin = dp(6)
         tCur.textSize = 12f; tCur.setTextColor(Color.argb(170, 255, 255, 255))
         tLeft.textSize = 12f; tLeft.setTextColor(Color.argb(170, 255, 255, 255))
         tLeft.gravity = Gravity.END
@@ -185,13 +182,19 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         times.addView(tCur, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         times.addView(fmtTv, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 2f))
         times.addView(tLeft, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        addView(times, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(times, timesLp)
 
-        /* транспорт */
+        /* транспорт: шафл, назад, play, вперёд, повтор — как в большом плеере */
         val tr = LinearLayout(ctx)
         tr.orientation = HORIZONTAL
         tr.gravity = Gravity.CENTER_VERTICAL
         tr.setPadding(0, dp(14), 0, dp(6))
+        shufI.icon = "shuffle"; shufI.setColor(Color.argb(170, 255, 255, 255))
+        shufI.setOnClickListener {
+            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            PlayerService.cmd(context, "toggleShuffle")
+        }
+        tr.addView(shufI, LinearLayout.LayoutParams(0, dp(32), 1f))
         val prev = IconView(ctx); prev.icon = "prev"; prev.setColor(Color.WHITE)
         prev.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onPrev?.invoke() }
         tr.addView(prev, LinearLayout.LayoutParams(0, dp(44), 1f))
@@ -201,63 +204,35 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         val next = IconView(ctx); next.icon = "next"; next.setColor(Color.WHITE)
         next.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onNext?.invoke() }
         tr.addView(next, LinearLayout.LayoutParams(0, dp(44), 1f))
+        repI.icon = "repeat"; repI.setColor(Color.argb(170, 255, 255, 255))
+        repI.setOnClickListener {
+            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            PlayerService.cmd(context, "toggleRepeat")
+        }
+        tr.addView(repI, LinearLayout.LayoutParams(0, dp(32), 1f))
         addView(tr, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        /* громкость */
-        val vol = LinearLayout(ctx)
-        vol.orientation = HORIZONTAL
-        vol.gravity = Gravity.CENTER_VERTICAL
-        vol.setPadding(0, dp(10), 0, dp(6))
-        val vl = IconView(ctx); vl.icon = "volLow"; vl.setColor(Color.argb(170, 255, 255, 255))
-        vol.addView(vl, LinearLayout.LayoutParams(dp(22), dp(22)))
-        volSeek.max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        volSeek.progress = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-        volSeek.progressDrawable = GradientDrawable().apply {
-            setColor(Color.argb(70, 255, 255, 255)); cornerRadius = dp(2).toFloat()
-        }
-        volSeek.thumb = GradientDrawable().apply {
-            setColor(Color.WHITE); cornerRadius = dp(2).toFloat()
-            setSize(dp(24), dp(5))
-        }
-        volSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                if (fromUser) am.setStreamVolume(AudioManager.STREAM_MUSIC, p, 0)
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) { }
-            override fun onStopTrackingTouch(sb: SeekBar?) { }
-        })
-        val vlp = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-        vlp.setMargins(dp(10), 0, dp(10), 0)
-        vol.addView(volSeek, vlp)
-        val vh = IconView(ctx); vh.icon = "volHigh"; vh.setColor(Color.argb(170, 255, 255, 255))
-        vol.addView(vh, LinearLayout.LayoutParams(dp(22), dp(22)))
-        addView(vol, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-
-        /* нижняя панель: текст / очередь / теги */
+        /* нижний ряд: очередь, текст, теги — порядок как в большом плеере */
         val bottom = LinearLayout(ctx)
         bottom.orientation = HORIZONTAL
         bottom.gravity = Gravity.CENTER_VERTICAL
         bottom.setPadding(0, dp(10), 0, 0)
-        val bLyrics = IconView(ctx); bLyrics.icon = "lyrics"; bLyrics.setColor(Color.WHITE)
-        bLyrics.background = GradientDrawable().apply {
-            setColor(Color.argb(60, 255, 255, 255)); shape = GradientDrawable.OVAL
-        }
-        bLyrics.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); recenter() }
         val bQueue = IconView(ctx); bQueue.icon = "queue"; bQueue.setColor(Color.argb(200, 255, 255, 255))
         bQueue.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onQueue?.invoke() }
+        bLyrics.icon = "lyrics"; bLyrics.setColor(accent())
+        bLyrics.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); recenter() }
         val bTags = IconView(ctx); bTags.icon = "tags"; bTags.setColor(Color.argb(200, 255, 255, 255))
         bTags.setOnClickListener { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onEditor?.invoke() }
         bottom.addView(View(ctx), LinearLayout.LayoutParams(0, dp(40), 1f))
-        bottom.addView(bLyrics, LinearLayout.LayoutParams(0, dp(44), 1f))
         bottom.addView(bQueue, LinearLayout.LayoutParams(0, dp(40), 1f))
+        bottom.addView(bLyrics, LinearLayout.LayoutParams(0, dp(44), 1f))
         bottom.addView(bTags, LinearLayout.LayoutParams(0, dp(40), 1f))
         bottom.addView(View(ctx), LinearLayout.LayoutParams(0, dp(40), 1f))
         addView(bottom, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
 
-    /* ---------- открытие под трек ---------- */
-
     fun open(t: MainActivity.Track?, coverPath: String?) {
+        openUri = t?.uri
         val bm = decodeSmall(coverPath)
         headerCover.setImageBitmap(bm)
         headerTitle.text = t?.title ?: "Ничего не играет"
@@ -266,12 +241,88 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(tint(bm, 0.46f), tint(bm, 0.20f))
         )
-        val raw = t?.lyrics
-        lines = if (raw != null) LrcParser.parse(raw) else emptyList()
-        timed = lines.isNotEmpty()
+        wave.setAccent(accent())
+        bLyrics.setColor(accent())
+        wave.setPeaks(null)
+        wave.setProgress(0f)
+        listBox.removeAllViews()
+        lineViews.clear()
+        lines = emptyList()
+        timed = false
+        curIdx = -1
+        val loading = TextView(context)
+        loading.text = "Загружаю текст…"
+        loading.textSize = 16f
+        loading.setTextColor(Color.argb(160, 255, 255, 255))
+        loading.gravity = Gravity.CENTER
+        loading.setPadding(dp(20), dp(60), dp(20), dp(20))
+        listBox.addView(loading, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        fmtTv.text = if (t != null) "${t.format} · ${specs(t).replace("/", " · ")}" else ""
+        scroll.post { scroll.scrollTo(0, 0) }
+        visibility = VISIBLE
+
+        if (t != null) {
+            val uri = t.uri
+            val dur = PlayerState.durationMs.toLong()
+            Thread {
+                val peaks = WaveformView.getPeaks(context, uri, dur)
+                post { if (openUri == uri) wave.setPeaks(peaks) }
+            }.start()
+            fetchLyrics(t) { raw ->
+                if (openUri == uri) render(raw)
+            }
+        } else {
+            render(null)
+        }
+    }
+
+    /* текст может лежать не только в USLT mp3: берём LYRICS из тегов любого формата */
+    private fun fetchLyrics(t: MainActivity.Track, cb: (String?) -> Unit) {
+        if (!t.lyrics.isNullOrBlank()) { cb(t.lyrics); return }
+        Thread {
+            var res: String? = null
+            try {
+                val uri = Uri.parse(t.uri)
+                val ext = (uri.lastPathSegment?.substringAfterLast('.', "") ?: "").lowercase()
+                val tmp = File(context.cacheDir, "lyr_head_" + Integer.toHexString(t.uri.hashCode()) + "." + ext)
+                context.contentResolver.openInputStream(uri)?.use { ins ->
+                    FileOutputStream(tmp).use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var left = 1024 * 1024
+                        while (left > 0) {
+                            val r = ins.read(buf, 0, minOf(buf.size, left))
+                            if (r <= 0) break
+                            out.write(buf, 0, r)
+                            left -= r
+                        }
+                    }
+                }
+                try {
+                    val af = AudioFileIO.read(tmp)
+                    res = af.tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                } catch (e: Exception) {
+                    if (ext == "m4a") {
+                        val full = File(context.cacheDir, "lyr_full_" + Integer.toHexString(t.uri.hashCode()) + ".m4a")
+                        context.contentResolver.openInputStream(uri)?.use { ins ->
+                            FileOutputStream(full).use { out -> ins.copyTo(out) }
+                        }
+                        res = AudioFileIO.read(full).tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                        full.delete()
+                    }
+                } finally {
+                    tmp.delete()
+                }
+            } catch (_: Exception) { }
+            post { cb(res) }
+        }.start()
+    }
+
+    private fun render(raw: String?) {
         listBox.removeAllViews()
         lineViews.clear()
         curIdx = -1
+        lines = if (raw != null) LrcParser.parse(raw) else emptyList()
+        timed = lines.isNotEmpty()
         if (raw == null || raw.isBlank()) {
             val none = TextView(context)
             none.text = "Текст не найден в метаданных файла."
@@ -290,7 +341,6 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         } else {
             for (l in lines) {
                 val tv = lineView(l.text, true)
-                val idx = lineViews.size
                 tv.setOnClickListener {
                     performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                     onSeek?.invoke(l.timeMs.toInt())
@@ -299,11 +349,7 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
                 lineViews.add(tv)
             }
         }
-        fmtTv.text = if (t != null) "${t.format} · ${specs(t).replace("/", " · ")}" else ""
-        volSeek.max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        volSeek.progress = am.getStreamVolume(AudioManager.STREAM_MUSIC)
         scroll.post { scroll.scrollTo(0, 0) }
-        visibility = VISIBLE
     }
 
     private fun specs(t: MainActivity.Track): String {
@@ -330,28 +376,20 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
         tv.setLineSpacing(dp(4).toFloat(), 1f)
         if (clickable) {
             tv.isClickable = true
-            tv.background = ripple()
+            tv.background = RippleDrawable(ColorStateList.valueOf(Color.argb(60, 255, 255, 255)), null, null)
         }
         return tv
     }
 
-    private fun ripple(): android.graphics.drawable.Drawable {
-        val r = android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(Color.argb(60, 255, 255, 255)),
-            null, null
-        )
-        return r
-    }
-
-    /* ---------- тик плеера ---------- */
-
     fun tick(posMs: Int, durMs: Int, playing: Boolean) {
-        this.durMs = durMs
-        seek.max = max(1, durMs)
-        if (!seeking) seek.progress = posMs
         tCur.text = fmt(posMs.toLong())
         tLeft.text = "-" + fmt((durMs - posMs).toLong())
         playI.icon = if (playing) "pause" else "play"
+        shufI.icon = if (PlayerState.shuffleOn) "shuffle" else "shuffleOff"
+        shufI.setColor(if (PlayerState.shuffleOn) accent() else Color.argb(170, 255, 255, 255))
+        repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
+        repI.setColor(if (PlayerState.repeatMode > 0) accent() else Color.argb(170, 255, 255, 255))
+        if (durMs > 0) wave.setProgress(posMs.toFloat() / durMs)
         if (!timed || lineViews.isEmpty()) return
         var idx = -1
         for (i in lines.indices) {
@@ -391,8 +429,6 @@ class LyricsScreen(ctx: Context) : LinearLayout(ctx) {
             scroll.smoothScrollTo(0, max(0, target))
         }
     }
-
-    /* ---------- цвет фона из обложки ---------- */
 
     private fun decodeSmall(path: String?): Bitmap? {
         if (path == null) return null
