@@ -690,30 +690,7 @@ class MainActivity : Activity() {
                 del.text = "🗑"
                 del.setTextColor(Color.parseColor("#FF6B6B"))
                 del.background = pressCircle()
-                del.setOnClickListener {
-                    AlertDialog.Builder(this)
-                        .setTitle("Удалить файл?")
-                        .setMessage("${t.title}\n${t.artist}")
-                        .setPositiveButton("Удалить") { _, _ ->
-                            Thread {
-                                val df = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))
-                                val ok = df?.delete() == true
-                                runOnUiThread {
-                                    if (ok) {
-                                        if (PlayerState.uri == t.uri) PlayerService.cmd(this, "stop")
-                                        tracks = tracks.filter { it.uri != t.uri }
-                                        saveLibraryCache()
-                                        rebuildContent()
-                                        Toast.makeText(this, "Удалено", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(this, "Не удалось удалить", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }.start()
-                        }
-                        .setNegativeButton("Отмена", null)
-                        .show()
-                }
+                del.setOnClickListener { confirmDelete(t) }
                 row.addView(del, LinearLayout.LayoutParams(dp(36), dp(36)))
                 box.addView(row)
             }
@@ -1588,3 +1565,584 @@ class MainActivity : Activity() {
                     } catch (e2: Exception) { }
                 }
             } finally {
+                tmp.delete()
+            }
+        }
+
+        if (durationMs == 0L) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val mmr = MediaMetadataRetriever()
+                    mmr.setDataSource(this, f.uri)
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                    mmr.release()
+                }
+            } catch (e: Exception) { }
+        }
+
+        try {
+            val ex = MediaExtractor()
+            ex.setDataSource(this, f.uri, null)
+            for (i in 0 until ex.trackCount) {
+                val mf = ex.getTrackFormat(i)
+                val mime = mf.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("audio/")) continue
+                if (mime == "audio/alac") isAlac = true
+                if (mf.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = mf.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                if (mf.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                    bitDepth = when (mf.getInteger(MediaFormat.KEY_PCM_ENCODING)) {
+                        2 -> 16; 5 -> 24; 6 -> 32; else -> 0
+                    }
+                }
+                if (mf.containsKey(MediaFormat.KEY_BIT_RATE)) streamBitrate = mf.getInteger(MediaFormat.KEY_BIT_RATE) / 1000
+                break
+            }
+            ex.release()
+        } catch (e: Exception) { }
+
+        if (isAlac) formatLabel = "ALAC"
+
+        var bitrate = streamBitrate
+        if (bitrate <= 0 && durationMs > 0) {
+            if (fileSize > 0) bitrate = (fileSize * 8 / durationMs).toInt()
+        }
+        return Track(f.uri.toString(), title, artist, tags, coverPath, album, genre, durationMs, bitrate, lyrics, year, formatLabel, sampleRate, bitDepth, fileSize, fileMod)
+    }
+
+    private fun rebuildContent(resetLimit: Boolean = true) {
+        headTitle.text = when {
+            currentTab == "menu" -> "Медиатека"
+            currentTab == "recent" -> "Недавно играло"
+            currentTab == "top" -> "Топ треков"
+            subType != null -> subValue ?: ""
+            currentTab == "tracks" -> "Треки"
+            currentTab == "albums" -> "Альбомы"
+            currentTab == "artists" -> "Исполнители"
+            currentTab == "genres" -> "Жанры"
+            else -> "Теги"
+        }
+        sortBtn.visibility = if (currentTab in listOf("tracks", "albums", "artists", "genres", "recent", "top")) View.VISIBLE else View.GONE
+        contentBox.removeAllViews()
+        if (searchShown) {
+            (searchInput.parent as? ViewGroup)?.removeView(searchInput)
+            val slp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            slp.setMargins(0, dp(4), 0, dp(10))
+            contentBox.addView(searchInput, slp)
+        }
+        contentBox.addView(rowsBox, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        rebuildRows(resetLimit)
+    }
+
+    private fun applySort(list: List<Track>, section: String): List<Track> {
+        val sortKey = prefs().getInt("sort_$section", 0)
+        return when (section) {
+            "tracks", "recent", "top" -> when (sortKey) {
+                1 -> list.sortedBy { it.year }
+                2 -> list.sortedByDescending { it.durationMs }
+                3 -> list.sortedByDescending { it.bitrateKbps }
+                else -> list.sortedBy { it.title }
+            }
+            "albums", "artists", "genres" -> when (sortKey) {
+                1 -> list.sortedByDescending { it.durationMs }
+                else -> list.sortedBy { it.title }
+            }
+            else -> list
+        }
+    }
+
+    private fun rebuildRows(resetLimit: Boolean = true) {
+        if (resetLimit) visibleLimit = 100
+        rowsBox.removeAllViews()
+        pageTotal = 0
+        val q = searchQuery.trim()
+        when (currentTab) {
+            "menu" -> addMenuRows()
+            "recent" -> {
+                val stats = Stats.load(this)
+                shown = applySort(
+                    tracks.filter { stats.containsKey(it.uri) && matches(it) }
+                        .sortedByDescending { stats[it.uri]?.second ?: 0L }
+                        .take(50),
+                    "recent"
+                )
+                pageTotal = shown.size
+                addTrackRows(shown)
+            }
+            "top" -> {
+                val stats = Stats.load(this)
+                shown = applySort(
+                    tracks.filter { stats.containsKey(it.uri) && matches(it) }
+                        .sortedByDescending { stats[it.uri]?.first ?: 0 }
+                        .take(50),
+                    "top"
+                )
+                pageTotal = shown.size
+                addTrackRows(shown)
+            }
+            "tracks" -> {
+                shown = applySort(tracks.filter { matches(it) }, "tracks")
+                pageTotal = shown.size
+                addTrackRows(shown)
+            }
+            "albums" -> {
+                if (subType == "album") {
+                    shown = subTracks { it.album == subValue && matches(it) }
+                    pageTotal = shown.size
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.album }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    pageTotal = groups.size
+                    addAlbumRows(groups)
+                }
+            }
+            "artists" -> {
+                if (subType == "artist") {
+                    shown = subTracks { it.artist == subValue && matches(it) }
+                    pageTotal = shown.size
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.artist }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    pageTotal = groups.size
+                    addNameRows(groups, "artist")
+                }
+            }
+            "genres" -> {
+                if (subType == "genre") {
+                    shown = subTracks { (it.genre.ifEmpty { "(без жанра)" }) == subValue && matches(it) }
+                    pageTotal = shown.size
+                    addTrackRows(shown)
+                } else {
+                    val groups = tracks.groupBy { it.genre.ifEmpty { "(без жанра)" } }.toSortedMap()
+                        .filter { (name, list) -> q.isEmpty() || name.contains(q, true) || list.any { matches(it) } }
+                    pageTotal = groups.size
+                    addNameRows(groups, "genre")
+                }
+            }
+            "tags" -> addTagList()
+        }
+        highlightCurrent()
+    }
+
+    private fun addPaged(list: List<Track>) {
+        for (t in list.take(visibleLimit)) addTrackRow(t)
+    }
+
+    private fun addMenuRows() {
+        val totalMin = tracks.sumOf { it.durationMs } / 60000
+        val durStr = if (totalMin >= 60) "${totalMin / 60} ч ${totalMin % 60} мин" else "$totalMin мин"
+        val tagCount = tracks.flatMap { it.tags }.distinct().size
+        val stats = Stats.load(this)
+        val recentCount = stats.size
+        val topCount = stats.values.count { it.first > 1 }
+
+        val items = listOf(
+            Triple("tracks", "Треки", tracks.size),
+            Triple("albums", "Альбомы", tracks.map { it.album }.distinct().size),
+            Triple("artists", "Исполнители", tracks.map { it.artist }.distinct().size),
+            Triple("genres", "Жанры", tracks.map { it.genre.ifEmpty { "(без жанра)" } }.distinct().size),
+            Triple("recent", "Недавно играло", recentCount),
+            Triple("top", "Топ треков", topCount),
+            Triple("tags", "Теги", tagCount)
+        )
+        for ((key, lbl, count) in items) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(8), dp(8), dp(8), dp(8))
+            row.background = null
+            val cover = TextView(this)
+            cover.text = count.toString()
+            cover.textSize = 22f
+            cover.setTypeface(Typeface.DEFAULT_BOLD)
+            cover.setTextColor(WHITE)
+            cover.gravity = Gravity.CENTER
+            cover.background = pillBg(ACCENT, 10)
+            roundCorners(cover, 10)
+            row.addView(cover, LinearLayout.LayoutParams(dp(72), dp(72)))
+            val name = TextView(this); name.text = lbl
+            name.textSize = 26f; name.setTextColor(WHITE)
+            name.setSingleLine(true); name.ellipsize = TextUtils.TruncateAt.END
+            name.setPadding(dp(12), 0, dp(6), 0)
+            row.addView(name, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            row.tag = "header"
+            row.setOnClickListener { goTab(key) }
+            rowsBox.addView(row)
+        }
+
+        val untagged = tracks.filter { it.tags.isEmpty() }.sortedBy { it.title }
+        shown = untagged
+        pageTotal = untagged.size
+        if (untagged.isNotEmpty()) {
+            val h = TextView(this)
+            h.text = "Без тегов: ${untagged.size}"
+            h.setTextColor(Color.parseColor("#BBBBCC"))
+            h.setPadding(0, dp(6), 0, dp(8))
+            h.tag = "header"
+            rowsBox.addView(h)
+            addPaged(untagged)
+        }
+
+        val passport = TextView(this)
+        passport.text = "Всего: ${tracks.size} треков · $durStr · папок: ${trees.size} · тегов: $tagCount"
+        passport.textSize = 12f
+        passport.setTextColor(Color.parseColor("#8D81A3"))
+        passport.setPadding(dp(4), dp(6), dp(4), 0)
+        passport.tag = "header"
+        rowsBox.addView(passport)
+    }
+
+    private fun subTracks(pred: (Track) -> Boolean): List<Track> = tracks.filter(pred).sortedBy { it.title }
+
+    private fun addTrackRow(t: Track) {
+        val rowL = LinearLayout(this)
+        rowL.orientation = LinearLayout.HORIZONTAL
+        rowL.gravity = Gravity.CENTER_VERTICAL
+        rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
+        rowL.background = rowBg(t.uri == PlayerState.uri)
+        rowL.tag = "track:" + t.uri
+
+        val iv = ImageView(this)
+        iv.scaleType = ImageView.ScaleType.CENTER_CROP
+        iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        roundCorners(iv, 10)
+        bindThumb(iv, t.coverPath)
+        rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
+
+        val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
+        col.setPadding(dp(10), 0, dp(6), 0)
+        val l1 = TextView(this); l1.text = highlight(t.title); l1.textSize = 15f; l1.setTextColor(WHITE)
+        l1.setSingleLine(true); l1.ellipsize = TextUtils.TruncateAt.END
+        val l2 = TextView(this); l2.text = highlight(t.artist); l2.textSize = 13f; l2.setTextColor(Color.parseColor("#BBBBCC"))
+        l2.setSingleLine(true); l2.ellipsize = TextUtils.TruncateAt.END
+        val l3 = TextView(this); l3.text = highlight(t.album + (if (t.year.isNotEmpty()) " · ${t.year}" else ""))
+        l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
+        l3.setSingleLine(true); l3.ellipsize = TextUtils.TruncateAt.END
+        val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
+        val fmtB = TextView(this); fmtB.text = t.format; fmtB.textSize = 11f
+        fmtB.setTypeface(Typeface.DEFAULT_BOLD)
+        fmtB.setTextColor(WHITE)
+        fmtB.background = pillBg(bubbleColor(t.format), 99)
+        fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+        val specTv = TextView(this); specTv.text = specsString(t); specTv.textSize = 11f
+        specTv.setTextColor(WHITE)
+        specTv.setPadding(dp(6), 0, 0, 0)
+        val tagsTv = TextView(this)
+        tagsTv.text = highlight(t.tags.joinToString(" ") { "#$it" })
+        tagsTv.textSize = 11f; tagsTv.setTextColor(ACCENT)
+        tagsTv.setSingleLine(true); tagsTv.ellipsize = TextUtils.TruncateAt.END
+        tagsTv.setPadding(dp(6), 0, 0, 0)
+        l4.addView(fmtB)
+        if (specTv.text.isNotEmpty()) l4.addView(specTv)
+        l4.addView(tagsTv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
+        rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val editBtn = IconView(this); editBtn.icon = "tags"; editBtn.setColor(GRAY)
+        editBtn.background = pressCircle()
+        editBtn.setOnClickListener { openEditor(t) }
+        rowL.addView(editBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
+
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+        rowL.setOnClickListener { play(t) }
+        rowL.setOnLongClickListener { showTrackMenu(t, rowL); true }
+        rowsBox.addView(rowL)
+    }
+
+    private fun addTrackRows(list: List<Track>) {
+        shown = list
+        if (list.isEmpty()) { emptyMsg("Ничего не найдено."); return }
+        addPaged(list)
+    }
+
+    private fun addAlbumRows(groups: Map<String, List<Track>>) {
+        shown = emptyList()
+        if (groups.isEmpty()) { emptyMsg("Ничего не найдено."); return }
+        for ((name, list) in groups) {
+            val first = list.first()
+            val rowL = LinearLayout(this)
+            rowL.orientation = LinearLayout.HORIZONTAL
+            rowL.gravity = Gravity.CENTER_VERTICAL
+            rowL.setPadding(dp(8), dp(8), dp(4), dp(8))
+            rowL.background = null
+            val iv = ImageView(this)
+            iv.scaleType = ImageView.ScaleType.CENTER_CROP
+            iv.setBackgroundColor(Color.parseColor("#2A2A3A"))
+            roundCorners(iv, 10)
+            bindThumb(iv, first.coverPath)
+            rowL.addView(iv, LinearLayout.LayoutParams(dp(72), dp(72)))
+            val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
+            col.setPadding(dp(10), 0, dp(6), 0)
+            val l1 = TextView(this); l1.text = highlight(name); l1.textSize = 15f; l1.setTextColor(WHITE)
+            l1.setSingleLine(true); l1.ellipsize = TextUtils.TruncateAt.END
+            val artists = list.map { it.artist }.distinct()
+            val l2 = TextView(this); l2.text = highlight(if (artists.size == 1) artists[0] else "Разные исполнители")
+            l2.textSize = 13f; l2.setTextColor(Color.parseColor("#BBBBCC"))
+            l2.setSingleLine(true); l2.ellipsize = TextUtils.TruncateAt.END
+            val yr = list.map { it.year }.firstOrNull { it.isNotEmpty() } ?: ""
+            val l3 = TextView(this); l3.text = if (yr.isNotEmpty()) yr else "Год не указан"
+            l3.textSize = 12f; l3.setTextColor(Color.parseColor("#9A93A8"))
+            val l4 = LinearLayout(this); l4.orientation = LinearLayout.HORIZONTAL; l4.gravity = Gravity.CENTER_VERTICAL
+            val fmtB = TextView(this); fmtB.text = first.format; fmtB.textSize = 11f
+            fmtB.setTypeface(Typeface.DEFAULT_BOLD)
+            fmtB.setTextColor(WHITE)
+            fmtB.background = pillBg(bubbleColor(first.format), 99)
+            fmtB.setPadding(dp(8), dp(2), dp(8), dp(2))
+            val specTv = TextView(this); specTv.text = specsString(first); specTv.textSize = 11f
+            specTv.setTextColor(WHITE)
+            specTv.setPadding(dp(6), 0, 0, 0)
+            val cnt = TextView(this); cnt.text = "${list.size} треков"; cnt.textSize = 11f
+            cnt.setTextColor(Color.parseColor("#9A93A8")); cnt.setPadding(dp(6), 0, 0, 0)
+            l4.addView(fmtB)
+            if (specTv.text.isNotEmpty()) l4.addView(specTv)
+            l4.addView(cnt)
+            col.addView(l1); col.addView(l2); col.addView(l3); col.addView(l4)
+            rowL.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); rowL.layoutParams = lp
+            rowL.setOnClickListener {
+                subType = "album"; subValue = name
+                searchShown = false; searchQuery = ""
+                updatingSearch = true; searchInput.setText(""); updatingSearch = false
+                rebuildContent()
+            }
+            rowsBox.addView(rowL)
+        }
+    }
+
+    private fun addNameRows(groups: Map<String, List<Track>>, type: String) {
+        shown = emptyList()
+        if (groups.isEmpty()) { emptyMsg("Ничего не найдено."); return }
+        for ((name, list) in groups) {
+            val row = TextView(this)
+            row.text = highlight("$name  (${list.size})")
+            row.setPadding(dp(12), dp(12), dp(12), dp(12))
+            row.background = null
+            row.setTextColor(WHITE)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, 0, dp(8)); row.layoutParams = lp
+            row.tag = "group"
+            row.setOnClickListener {
+                subType = type; subValue = name
+                searchShown = false; searchQuery = ""
+                updatingSearch = true; searchInput.setText(""); updatingSearch = false
+                rebuildContent()
+            }
+            rowsBox.addView(row)
+        }
+    }
+
+    private fun addTagList() {
+        val base = tracks.filter { t -> selected.all { g -> t.tags.contains(g) } }
+        val counts = mutableMapOf<String, Int>()
+        for (t in base) for (g in t.tags) counts[g] = (counts[g] ?: 0) + 1
+        for (g in selected) if (!counts.containsKey(g)) counts[g] = 0
+        val q = searchQuery.trim()
+        val visibleTags = counts.keys.filter { q.isEmpty() || it.contains(q, true) }
+
+        if (visibleTags.isEmpty()) {
+            shown = emptyList()
+            emptyMsg(if (counts.isEmpty()) "Тегов пока нет. Кнопка бирки на карточке трека откроет редактор." else "Ничего не найдено.")
+            return
+        }
+
+        val ordered = selected.filter { visibleTags.contains(it) } + visibleTags.sorted().filter { !selected.contains(it) }
+        val flow = FlowLayout(this)
+        flow.centerRows = true
+        flow.tag = "header"
+        for (tag in ordered) {
+            val chip = TextView(this)
+            chip.text = highlight("#$tag (${counts[tag]})")
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8))
+            val on = selected.contains(tag)
+            chip.background = pillBg(if (on) ACCENT else BUBBLE_BG, 99)
+            chip.setTextColor(WHITE)
+            val lp = ViewGroup.MarginLayoutParams(ViewGroup.MarginLayoutParams.WRAP_CONTENT, ViewGroup.MarginLayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(6), dp(6)); chip.layoutParams = lp
+            chip.tag = "header"
+            chip.setOnClickListener {
+                if (selected.contains(tag)) selected.remove(tag) else selected.add(tag)
+                rebuildContent()
+            }
+            flow.addView(chip)
+        }
+        rowsBox.addView(flow)
+
+        shown = base.filter { matches(it) }.shuffled()
+        pageTotal = shown.size
+        val h = TextView(this)
+        h.text = if (selected.isEmpty()) "Плейлист: все треки (${shown.size}), шафл"
+                 else "Пересечение ${selected.joinToString(" ∩ ") { "#$it" }}: ${shown.size}, шафл"
+        h.setTextColor(Color.parseColor("#BBBBCC"))
+        h.setPadding(0, dp(8), 0, dp(8))
+        h.tag = "header"
+        rowsBox.addView(h)
+        addPaged(shown)
+        if (shown.isEmpty()) emptyMsg("Пересечение пусто: сними часть тегов.")
+    }
+
+    private fun emptyMsg(msg: String) {
+        val empty = TextView(this)
+        empty.text = msg
+        empty.setPadding(0, dp(16), 0, 0)
+        empty.tag = "header"
+        rowsBox.addView(empty)
+    }
+
+    private fun highlightCurrent() {
+        val cur = "track:" + PlayerState.uri
+        for (i in 0 until rowsBox.childCount) {
+            val v = rowsBox.getChildAt(i)
+            val tag = v.tag as? String ?: continue
+            if (tag.startsWith("track:")) {
+                v.background = rowBg(tag == cur)
+            }
+        }
+    }
+
+    private fun openEditor(t: Track) {
+        TagEditorDialog.show(this, t) { draft ->
+            TagEditorDialog.write(this, t, draft) { ok, msg ->
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                if (ok) {
+                    val df = DocumentFile.fromSingleUri(this, Uri.parse(t.uri))
+                    if (df != null) {
+                        val newTrack = readTrack(df)
+                        tracks = tracks.map { if (it.uri == t.uri) newTrack else it }
+                        saveLibraryCache()
+                        rebuildContent()
+                        refreshNow()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun rebuildPlayerMeta() {
+        val t = curTrack()
+        PlayerState.coverPath = t?.coverPath
+        pTitle.text = if (PlayerState.error != null) "⚠ " + PlayerState.error else PlayerState.title.ifEmpty { "Ничего не играет" }
+        pArtist.text = PlayerState.artist
+        pAlbum.text = t?.album ?: ""
+        val fmtLabel = t?.format ?: ""
+        pFormat.text = fmtLabel
+        pFormat.background = pillBg(bubbleColor(fmtLabel), 99)
+        val specs = t?.let { specsString(it) } ?: ""
+        pSpecs.text = specs
+        pSpecs.visibility = if (specs.isEmpty()) View.GONE else View.VISIBLE
+        tagsRow.removeAllViews()
+        val tags = t?.tags ?: emptyList()
+        for (g in tags) {
+            val chip = TextView(this)
+            chip.text = "#$g"
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6))
+            chip.background = pillBg(BUBBLE_BG, 99)
+            chip.setTextColor(Color.WHITE)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, 0, dp(6), 0); chip.layoutParams = lp
+            chip.setOnClickListener {
+                selected.clear(); selected.add(g)
+                currentTab = "tags"; subType = null; subValue = null
+                showLibrary(); rebuildContent()
+            }
+            tagsRow.addView(chip)
+        }
+        waveView.setPeaks(null)
+        waveView.setProgress(0f)
+        val uri = PlayerState.uri
+        val durForWave = t?.durationMs ?: 0L
+        if (uri != null) {
+            Thread {
+                val peaks = WaveformView.getPeaks(this, uri, durForWave)
+                runOnUiThread { if (PlayerState.uri == uri) waveView.setPeaks(peaks) }
+            }.start()
+        }
+        if (uri != null) loadBigCover(uri)
+    }
+
+    private fun loadBigCover(uri: String) {
+        bigCoverUri = uri
+        val path = curTrack()?.coverPath
+        Thread {
+            val bm = loadBitmap(path, 720)
+            runOnUiThread {
+                bigCoverBm = bm
+                if (bigCoverUri == uri && playerScreen.visibility == View.VISIBLE) {
+                    showCoverBig(bm)
+                }
+            }
+        }.start()
+    }
+
+    private fun refreshNow() {
+        val playing = PlayerState.playing
+        val t = curTrack()
+        nbTitle.text = when {
+            PlayerState.error != null -> "⚠ " + PlayerState.error
+            PlayerState.uri == null -> "Ничего не играет"
+            else -> PlayerState.title
+        }
+        nbArtist.text = PlayerState.artist
+        val fmtLabel = t?.format ?: ""
+        nbFormat.text = fmtLabel
+        nbFormat.background = pillBg(bubbleColor(fmtLabel), 99)
+        val nspecs = t?.let { specsString(it) } ?: ""
+        nbSpecs.text = nspecs
+        nbSpecs.visibility = if (nspecs.isEmpty()) View.GONE else View.VISIBLE
+        nbPlay.icon = if (playing) "pause" else "play"
+        if (playing) nbBar.visibility = View.VISIBLE
+        playI.icon = if (playing) "pause" else "play"
+        shufI.icon = if (PlayerState.shuffleOn) "shuffle" else "shuffleOff"
+        shufI.setColor(if (PlayerState.shuffleOn) ACCENT else GRAY)
+        repI.icon = if (PlayerState.repeatMode == 2) "repeat1" else "repeat"
+        repI.setColor(if (PlayerState.repeatMode > 0) ACCENT else GRAY)
+        if (PlayerState.uri == null) {
+            PlayerState.coverPath = null
+            nbCover.setImageResource(0); nbCover.rotation = 0f
+            showCoverBig(null)
+            bigCoverUri = null; lastPlayerUri = null
+        }
+        if (PlayerState.uri != lastPlayerUri) {
+            lastPlayerUri = PlayerState.uri
+            bindThumb(nbCover, t?.coverPath)
+            rebuildPlayerMeta()
+            if (lyricsScreen.visibility == View.VISIBLE) lyricsScreen.open(t, t?.coverPath)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PlayerState.listeners.add(listener)
+        handler.post(poll)
+        refreshNow(); highlightCurrent()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        PlayerState.listeners.remove(listener)
+        handler.removeCallbacks(poll)
+    }
+
+    private fun play(t: Track) {
+        if (t.format == "ALAC") {
+            Toast.makeText(
+                this,
+                "ALAC: в Android нет декодера этого формата — воспроизведение невозможно. Теги и обложка доступны.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        val items = ArrayList(shown.map { QItem(it.uri, it.title, it.artist) })
+        PlayerState.coverPath = t.coverPath
+        PlayerService.cmd(this, "play", items, shown.indexOf(t))
+        nbBar.visibility = View.VISIBLE
+        bigCoverUri = null; bigCoverBm = null
+        bindThumb(nbCover, t.coverPath)
+        if (playerScreen.visibility == View.VISIBLE) { lastPlayerUri = null; refreshNow() }
+        highlightCurrent()
+    }
+}
