@@ -98,6 +98,8 @@ class PlayerService : Service() {
         }
     }
 
+    /* все мутации плеера — только на главном потоке */
+    @Volatile
     private var player: MediaPlayer? = null
     private var queue = listOf<QItem>()
     private var index = 0
@@ -115,11 +117,12 @@ class PlayerService : Service() {
     private val prefs by lazy { getSharedPreferences("player_state", MODE_PRIVATE) }
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { focus ->
+        val p = player ?: return@OnAudioFocusChangeListener
         when (focus) {
             AudioManager.AUDIOFOCUS_LOSS -> pause()
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pause()
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.setVolume(0.3f, 0.3f)
-            AudioManager.AUDIOFOCUS_GAIN -> player?.setVolume(1f, 1f)
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching { p.setVolume(0.3f, 0.3f) }
+            AudioManager.AUDIOFOCUS_GAIN -> runCatching { p.setVolume(1f, 1f) }
         }
     }
 
@@ -191,6 +194,11 @@ class PlayerService : Service() {
 
     fun currentPosition(): Int = try { player?.currentPosition ?: 0 } catch (e: Exception) { 0 }
 
+    private fun releasePlayer() {
+        player?.let { runCatching { it.release() } }
+        player = null
+    }
+
     /* ---------- переживание смерти сервиса: очередь и позиция в prefs ---------- */
 
     private fun persist(posMs: Int) {
@@ -260,6 +268,7 @@ class PlayerService : Service() {
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(focusListener)
         }
+        focusRequest = null
     }
 
     private fun playCurrent(pushHistory: Boolean = true, startPosMs: Int = 0) {
@@ -276,8 +285,7 @@ class PlayerService : Service() {
 
         Stats.record(this, item.uri)
         gainFocus()
-        player?.let { runCatching { it.release() } }
-        player = null
+        releasePlayer()
         PlayerState.uri = item.uri
         PlayerState.title = item.title
         PlayerState.artist = item.artist
@@ -289,34 +297,39 @@ class PlayerService : Service() {
         updateState(); startFg(); refreshNotifIcon(); PlayerState.emit()
 
         Thread {
+            var mp: MediaPlayer? = null
             try {
-                val mp = MediaPlayer()
-                mp.setAudioAttributes(
+                val m = MediaPlayer()
+                mp = m
+                m.setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
-                mp.setDataSource(this, Uri.parse(item.uri))
-                mp.setOnCompletionListener {
+                m.setDataSource(this, Uri.parse(item.uri))
+                m.setOnCompletionListener {
                     val played = SystemClock.uptimeMillis() - startedAtMs
                     if (played > 1000) mainHandler.post { autoNext() }
                     else mainHandler.post { fail("Трек завершился мгновенно — поток пустой или недоступный. Перебор остановлен.") }
                 }
-                mp.setOnErrorListener { _, what, extra ->
+                m.setOnErrorListener { _, what, extra ->
                     mainHandler.post { fail("Ошибка воспроизведения: what=$what, extra=$extra") }
                     true
                 }
-                mp.prepare()
-                if (startPosMs > 0) runCatching { mp.seekTo(startPosMs) }
-                mp.start()
-                startedAtMs = SystemClock.uptimeMillis()
-                player = mp
-                PlayerState.durationMs = runCatching { mp.duration }.getOrDefault(0)
+                m.prepare()
+                if (startPosMs > 0) runCatching { m.seekTo(startPosMs) }
+                /* присваивание и старт — на главном, чтобы не гоняться с освобождением */
                 mainHandler.post {
+                    if (player != null) releasePlayer()
+                    player = m
+                    runCatching { m.start() }
+                    startedAtMs = SystemClock.uptimeMillis()
+                    PlayerState.durationMs = runCatching { m.duration }.getOrDefault(0)
                     updateMetadata(item); updateState(); startFg(); PlayerState.emit()
                 }
             } catch (e: Exception) {
+                mp?.let { runCatching { it.release() } }
                 mainHandler.post { fail("Не удалось открыть трек: ${e.javaClass.simpleName}: ${e.message}") }
             }
         }.start()
@@ -388,8 +401,7 @@ class PlayerService : Service() {
     private fun fail(msg: String) {
         PlayerState.playing = false
         PlayerState.error = msg
-        player?.let { runCatching { it.release() } }
-        player = null
+        releasePlayer()
         persist(0)
         updateState()
         stopForeground(false)
@@ -436,7 +448,7 @@ class PlayerService : Service() {
 
     private fun stopAll() {
         persist(currentPosition())
-        player?.let { runCatching { it.release() } }; player = null
+        releasePlayer()
         abandonFocus()
         PlayerState.playing = false; PlayerState.uri = null; PlayerState.durationMs = 0; PlayerState.error = null
         PlayerState.coverPath = null
@@ -513,8 +525,10 @@ class PlayerService : Service() {
     override fun onDestroy() {
         persist(currentPosition())
         instance = null
+        /* снимаем слушатель фокуса ДО освобождения плеера, иначе позднее событие тронет мёртвый объект */
+        abandonFocus()
         runCatching { unregisterReceiver(noisyReceiver) }
-        player?.let { runCatching { it.release() } }
+        releasePlayer()
         session.release()
         super.onDestroy()
     }
