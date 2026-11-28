@@ -14,8 +14,10 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.mpatric.mp3agic.ID3v24Tag
 import com.mpatric.mp3agic.Mp3File
@@ -54,49 +56,7 @@ object TagEditorDialog {
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(ctx, 16), dp(ctx, 8), dp(ctx, 16), 0)
 
-        val fields = LinearLayout(ctx); fields.orientation = LinearLayout.VERTICAL
-        val fTitle = field(ctx, "Название", draft.title); fields.addView(fTitle)
-        val fArtist = field(ctx, "Исполнитель", draft.artist); fields.addView(fArtist)
-        val fAlbum = field(ctx, "Альбом", draft.album); fields.addView(fAlbum)
-        val fYear = field(ctx, "Год", draft.year); fields.addView(fYear)
-        val fGenre = field(ctx, "Жанр", draft.genre); fields.addView(fGenre)
-        box.addView(fields)
-
-        val coverRow = LinearLayout(ctx)
-        coverRow.orientation = LinearLayout.HORIZONTAL
-        coverRow.gravity = Gravity.CENTER_VERTICAL
-        coverRow.setPadding(0, dp(ctx, 10), 0, dp(ctx, 6))
-        val coverView = ImageView(ctx)
-        coverView.scaleType = ImageView.ScaleType.CENTER_CROP
-        coverView.setBackgroundColor(Color.parseColor("#2A2A3A"))
-        coverView.clipToOutline = true
-        coverView.outlineProvider = object : android.view.ViewOutlineProvider() {
-            override fun getOutline(v: View, o: android.graphics.Outline) {
-                o.setRoundRect(0, 0, v.width, v.height, dp(ctx, 10).toFloat())
-            }
-        }
-        loadCover(ctx, draft.coverPath, coverView)
-        coverRow.addView(coverView, LinearLayout.LayoutParams(dp(ctx, 72), dp(ctx, 72)))
-
-        val coverBtns = LinearLayout(ctx); coverBtns.orientation = LinearLayout.VERTICAL
-        coverBtns.setPadding(dp(ctx, 10), 0, 0, 0)
-        val btnReplace = miniBtn(ctx, "Заменить") {
-            val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
-            i.addCategory(Intent.CATEGORY_OPENABLE)
-            i.type = "image/*"
-            (ctx as android.app.Activity).startActivityForResult(i, REQ_COVER)
-            _pendingCoverView = coverView
-            _pendingDraft = draft
-        }
-        val btnRemove = miniBtn(ctx, "Удалить") {
-            draft.coverPath = null
-            coverView.setImageResource(0)
-        }
-        coverBtns.addView(btnReplace)
-        coverBtns.addView(btnRemove)
-        coverRow.addView(coverBtns)
-        box.addView(coverRow)
-
+        /* ---------- хештеги: всегда на виду ---------- */
         val tagsLabel = TextView(ctx)
         tagsLabel.text = "Хештеги"
         tagsLabel.setTextColor(Color.parseColor("#BBBBCC"))
@@ -119,9 +79,95 @@ object TagEditorDialog {
         tagInput.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 10), dp(ctx, 8))
         box.addView(tagInput)
 
+        /* ---------- спойлер «ещё»: обложка + поля ---------- */
+        val spoilerHead = LinearLayout(ctx)
+        spoilerHead.orientation = LinearLayout.HORIZONTAL
+        spoilerHead.gravity = Gravity.CENTER_VERTICAL
+        spoilerHead.setPadding(0, dp(ctx, 14), 0, dp(ctx, 6))
+        val spoilerTitle = TextView(ctx)
+        spoilerTitle.text = "ещё"
+        spoilerTitle.textSize = 15f
+        spoilerTitle.setTextColor(Color.parseColor("#BBBBCC"))
+        spoilerHead.addView(spoilerTitle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val spoilerChev = IconView(ctx)
+        spoilerChev.icon = "chevronDown"
+        spoilerChev.setColor(Color.parseColor("#8D81A3"))
+        spoilerHead.addView(spoilerChev, LinearLayout.LayoutParams(dp(ctx, 24), dp(ctx, 24)))
+        box.addView(spoilerHead)
+
+        val spoilerBody = LinearLayout(ctx)
+        spoilerBody.orientation = LinearLayout.VERTICAL
+        spoilerBody.visibility = View.GONE
+        box.addView(spoilerBody)
+
+        /* обложка во главе спойлера: 400% от прежних 72dp = 288dp, по центру */
+        val coverSize = dp(ctx, 288)
+        val coverFrame = FrameLayout(ctx)
+        val coverView = ImageView(ctx)
+        coverView.scaleType = ImageView.ScaleType.CENTER_CROP
+        coverView.setBackgroundColor(Color.parseColor("#2A2A3A"))
+        coverView.clipToOutline = true
+        coverView.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, o: android.graphics.Outline) {
+                o.setRoundRect(0, 0, v.width, v.height, dp(ctx, 12).toFloat())
+            }
+        }
+        loadCover(ctx, draft.coverPath, coverView)
+        coverFrame.addView(coverView, FrameLayout.LayoutParams(coverSize, coverSize))
+
+        /* кнопки поверх обложки, в её центре, появляются по тапу на обложку */
+        val overlay = LinearLayout(ctx)
+        overlay.orientation = LinearLayout.HORIZONTAL
+        overlay.gravity = Gravity.CENTER
+        overlay.visibility = View.GONE
+        val btnReplace = miniBtn(ctx, "Заменить") {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            i.addCategory(Intent.CATEGORY_OPENABLE)
+            i.type = "image/*"
+            (ctx as android.app.Activity).startActivityForResult(i, REQ_COVER)
+            _pendingCoverView = coverView
+            _pendingDraft = draft
+            overlay.visibility = View.GONE
+        }
+        val btnRemove = miniBtn(ctx, "Удалить") {
+            draft.coverPath = null
+            coverView.setImageResource(0)
+            overlay.visibility = View.GONE
+        }
+        val ovLp1 = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        ovLp1.setMargins(0, 0, dp(ctx, 8), 0)
+        overlay.addView(btnReplace, ovLp1)
+        overlay.addView(btnRemove, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        coverFrame.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        coverView.setOnClickListener {
+            overlay.visibility = if (overlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        val coverWrap = LinearLayout(ctx)
+        coverWrap.orientation = LinearLayout.HORIZONTAL
+        coverWrap.gravity = Gravity.CENTER_HORIZONTAL
+        coverWrap.setPadding(0, dp(ctx, 6), 0, dp(ctx, 10))
+        coverWrap.addView(coverFrame, LinearLayout.LayoutParams(coverSize, coverSize))
+        spoilerBody.addView(coverWrap)
+
+        /* поля под обложкой */
+        val fTitle = field(ctx, "Название", draft.title); spoilerBody.addView(fTitle)
+        val fArtist = field(ctx, "Исполнитель", draft.artist); spoilerBody.addView(fArtist)
+        val fAlbum = field(ctx, "Альбом", draft.album); spoilerBody.addView(fAlbum)
+        val fYear = field(ctx, "Год", draft.year); spoilerBody.addView(fYear)
+        val fGenre = field(ctx, "Жанр", draft.genre); spoilerBody.addView(fGenre)
+
+        spoilerHead.setOnClickListener {
+            val open = spoilerBody.visibility != View.VISIBLE
+            spoilerBody.visibility = if (open) View.VISIBLE else View.GONE
+            spoilerChev.rotation = if (open) 180f else 0f
+        }
+
+        val scroll = ScrollView(ctx)
+        scroll.addView(box, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         val dialog = AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("${track.artist} - ${track.title}")
-            .setView(box)
+            .setView(scroll)
             .setPositiveButton("Сохранить", null)
             .setNegativeButton("Отмена", null)
             .create()
@@ -230,7 +276,7 @@ object TagEditorDialog {
         opts.inJustDecodeBounds = true
         BitmapFactory.decodeFile(path, opts)
         var s = 1
-        while (opts.outWidth / (s * 2) >= 192) s *= 2
+        while (opts.outWidth / (s * 2) >= 512) s *= 2
         opts.inJustDecodeBounds = false
         opts.inSampleSize = s
         iv.setImageBitmap(BitmapFactory.decodeFile(path, opts))
@@ -264,16 +310,10 @@ object TagEditorDialog {
         b.textSize = 12f
         b.setTextColor(Color.WHITE)
         b.background = GradientDrawable().apply {
-            setColor(Color.parseColor("#2A2A3A"))
+            setColor(Color.parseColor("#CC2A2A3A"))
             cornerRadius = dp(ctx, 99).toFloat()
         }
         b.setPadding(dp(ctx, 14), dp(ctx, 6), dp(ctx, 14), dp(ctx, 6))
-        val lp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        lp.setMargins(0, 0, 0, dp(ctx, 4))
-        b.layoutParams = lp
         b.setOnClickListener { click() }
         return b
     }
@@ -299,9 +339,7 @@ object TagEditorDialog {
                     tag.title = draft.title
                     tag.artist = draft.artist
                     tag.album = draft.album
-                    /* ID3v2.4: year — это String (TDRC frame) */
                     if (draft.year.isNotEmpty()) tag.year = draft.year
-                    /* genreDescription — для текстового жанра (setGenre(int) не подходит) */
                     if (draft.genre.isNotEmpty()) tag.genreDescription = draft.genre
                     val tagsLine = draft.tags.joinToString("\n") { "#$it" }
                     val old = tag.comment ?: ""
